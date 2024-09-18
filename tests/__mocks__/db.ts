@@ -5,12 +5,23 @@ import { factory, nullable, primaryKey } from "@mswjs/data";
  * Creates an object that can be used as a db to persist data within tests
  */
 export const db = factory({
+  content: {
+    id: primaryKey(Number),
+    source_id: String,
+    type: String,
+    plaintext: nullable(String),
+    embedding: Array,
+    metadata: Object,
+    created_at: Date,
+    modified_at: Date,
+  },
   users: {
     id: primaryKey(Number),
     login: String,
     avatar_url: nullable(String), // Add any additional fields based on the schema
   },
   repo: {
+    node_id: String,
     id: primaryKey(Number),
     name: String,
     full_name: String, // Assuming full_name is needed for repo
@@ -62,6 +73,7 @@ export const db = factory({
     deployments_url: String,
   },
   issue: {
+    node_id: String,
     id: primaryKey(Number),
     number: Number,
     title: String,

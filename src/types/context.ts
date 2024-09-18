@@ -16,7 +16,8 @@ export type SupportedEventsU =
   | "issue_comment.edited"
   | "issues.opened"
   | "issues.edited"
-  | "issues.deleted";
+  | "issues.deleted"
+  | "push"
 
 export type SupportedEvents = {
   [K in SupportedEventsU]: K extends WebhookEventName ? WebhookEvent<K> : never;

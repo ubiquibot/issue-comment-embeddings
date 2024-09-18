@@ -15,4 +15,8 @@ export const STRINGS = {
   CONFIGURABLE_RESPONSE: "Hello, Code Reviewers!",
   INVALID_COMMAND: "/Goodbye",
   COMMENT_DOES_NOT_EXIST: "Comment does not exist",
+  REMOVED_FOR_BREVITY: "removed for brevity",
+  LOGS_ANON: "_Logs.<anonymous>",
+  UPDATED_MESSAGE: "Updated message",
+  ISSUES_OPENED: "issues.opened",
 };
