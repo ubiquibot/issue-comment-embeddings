@@ -6,20 +6,18 @@ import { Context } from "./context";
  * of `context` to a specific event payload.
  */
 
-/**
- * Restricts the scope of `context` to the `issue_comment.created`, `issue_comment.deleted`, and `issue_comment.edited` payloads.
- *
- * @param context The context object.
- */
-export function isIssueCommentEvent(context: Context): context is Context<"issue_comment.created" | "issue_comment.deleted" | "issue_comment.edited"> {
-  return context.eventName === "issue_comment.created" || context.eventName === "issue_comment.deleted" || context.eventName === "issue_comment.edited";
+export function isIssueCommentEvent(
+  payload: unknown
+): payload is Context<"issue_comment.created" | "issue_comment.edited" | "issue_comment.deleted">["payload"] {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+  return "comment" in payload;
 }
 
-/**
- * Restricts the scope of `context` to the `issues.opened`, `issues.edited`, and `issues.deleted` payloads.
- *
- * @param context The context object.
- */
-export function isIssueEvent(context: Context): context is Context<"issues.opened" | "issues.edited" | "issues.deleted"> {
-  return context.eventName === "issues.opened" || context.eventName === "issues.edited" || context.eventName === "issues.deleted";
+export function isIssueEvent(payload: unknown): payload is Context<"issues.opened" | "issues.edited" | "issues.deleted">["payload"] {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
+  return "issue" in payload;
 }

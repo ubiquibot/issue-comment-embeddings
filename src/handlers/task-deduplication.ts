@@ -1,6 +1,6 @@
-import { IssueSimilaritySearchResult } from "../adapters/supabase/helpers/issues";
+import { CallbackResult } from "../proxy-callbacks";
 import { Context } from "../types";
-import { IssuePayload } from "../types/payload";
+import { IssueSimilaritySearchResult } from "../types/embeddings";
 
 export interface IssueGraphqlResponse {
   node: {
@@ -15,27 +15,34 @@ export interface IssueGraphqlResponse {
  * @param context
  * @returns true if the issue is similar to an existing issue, false otherwise
  */
-export async function issueChecker(context: Context): Promise<boolean> {
+export async function taskSimilaritySearch(context: Context<"issues.opened" | "issues.edited">): Promise<CallbackResult> {
   const {
     logger,
     adapters: { supabase },
     octokit,
   } = context;
-  const { payload } = context as { payload: IssuePayload };
-  const issue = payload.issue;
-  const issueContent = issue.body + issue.title;
+  const {
+    payload: { issue, repository },
+  } = context;
+  const similarIssues: IssueSimilaritySearchResult[] = [];
+
+  similarIssues.push(...(await supabase.embeddings.findSimilarContent(issue.title, context.config.warningThreshold, issue.node_id)));
+  if (issue.body) {
+    similarIssues.push(...(await supabase.embeddings.findSimilarContent(issue.body, context.config.warningThreshold, issue.node_id)));
+  }
+
+  logger.info(`Found ${similarIssues.length} similar issues`);
 
   // Fetch all similar issues based on settings.warningThreshold
-  const similarIssues = await supabase.issue.findSimilarIssues(issueContent, context.config.warningThreshold, issue.node_id);
   if (similarIssues && similarIssues.length > 0) {
-    const matchIssues = similarIssues.filter((issue) => issue.similarity >= context.config.matchThreshold);
+    const matchIssues = similarIssues.filter((issue) => issue?.similarity >= context.config.matchThreshold);
 
     // Handle issues that match the MATCH_THRESHOLD (Very Similar)
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.matchThreshold} already exists`);
       await octokit.issues.update({
-        owner: payload.repository.owner.login,
-        repo: payload.repository.name,
+        owner: repository.owner.login,
+        repo: repository.name,
         issue_number: issue.number,
         state: "closed",
         state_reason: "not_planned",
@@ -45,12 +52,12 @@ export async function issueChecker(context: Context): Promise<boolean> {
     // Handle issues that match the settings.warningThreshold but not the MATCH_THRESHOLD
     if (similarIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.warningThreshold} already exists`);
-      await handleSimilarIssuesComment(context, payload, issue.number, similarIssues);
-      return true;
+      await handleSimilarIssuesComment(context, issue.number, similarIssues);
+      return { statusCode: 200 };
     }
   }
 
-  return false;
+  return { statusCode: 204 };
 }
 
 /**
@@ -60,7 +67,8 @@ export async function issueChecker(context: Context): Promise<boolean> {
  * @param issueNumber
  * @param similarIssues
  */
-async function handleSimilarIssuesComment(context: Context, payload: IssuePayload, issueNumber: number, similarIssues: IssueSimilaritySearchResult[]) {
+async function handleSimilarIssuesComment(context: Context, issueNumber: number, similarIssues: IssueSimilaritySearchResult[]) {
+  const { payload } = context;
   const issueList: IssueGraphqlResponse[] = await Promise.all(
     similarIssues.map(async (issue: IssueSimilaritySearchResult) => {
       const issueUrl: IssueGraphqlResponse = await context.octokit.graphql(

@@ -17,7 +17,7 @@
     "knip-ci": "knip --no-exit-code --reporter json --config .github/knip.ts",
     "prepare": "husky install",
     "test": "jest --setupFiles dotenv/config --coverage",
-    "worker": "wrangler dev --env dev --port 5000",
+    "worker": "wrangler dev --env dev --port 4000",
     "supabase:generate:local": "supabase gen types typescript --local > src/types/database.ts",
     "supabase:generate:remote": "cross-env-shell \"supabase gen types typescript --project-id $SUPABASE_PROJECT_ID --schema public > src/types/database.ts\""
   },
@@ -69,7 +69,7 @@
     "lint-staged": "15.2.7",
     "npm-run-all": "4.1.5",
     "prettier": "3.3.2",
-    "supabase": "1.200.3",
+    "supabase": "^1.200.3",
     "ts-jest": "29.1.5",
     "tsx": "4.15.6",
     "typescript": "5.4.5",
@@ -89,6 +89,5 @@
     "extends": [
       "@commitlint/config-conventional"
     ]
-  },
-  "packageManager": "yarn@1.22.22"
+  }
 }

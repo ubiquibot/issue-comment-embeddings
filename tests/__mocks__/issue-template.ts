@@ -48,7 +48,7 @@ export default {
     html_url: "",
     id: 1,
     name: "undefined",
-    node_id: "",
+    node_id: "test_issue1",
     organizations_url: "",
     received_events_url: "",
     repos_url: "",

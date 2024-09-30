@@ -4,7 +4,7 @@ import { drop } from "@mswjs/data";
 import { db } from "./__mocks__/db";
 import { server } from "./__mocks__/node";
 import { expect, describe, beforeAll, beforeEach, afterAll, afterEach, it } from "@jest/globals";
-import { Context, SupportedEvents } from "../src/types/context";
+import { Context, SupportedEvents, SupportedEventsU } from "../src/types/context";
 import { Octokit } from "@octokit/rest";
 import { STRINGS } from "./__mocks__/strings";
 import { createComment, setupTests } from "./__mocks__/helpers";
@@ -13,7 +13,9 @@ import dotenv from "dotenv";
 import { Logs } from "@ubiquity-dao/ubiquibot-logger";
 import { Env } from "../src/types";
 import { runPlugin } from "../src/plugin";
-import { CommentMock, createMockAdapters } from "./__mocks__/adapter";
+import { createAdapters } from "../src/adapters";
+import { createClient } from "@supabase/supabase-js";
+import { VoyageAIClient } from "voyageai";
 
 dotenv.config();
 jest.requireActual("@octokit/rest");
@@ -26,6 +28,7 @@ beforeAll(() => {
 afterEach(() => {
   server.resetHandlers();
   jest.clearAllMocks();
+  jest.resetModules();
 });
 afterAll(() => server.close());
 
@@ -46,51 +49,93 @@ describe("Plugin tests", () => {
     expect(content).toEqual(manifest);
   });
 
-  it("When a comment is created it should add it to the database", async () => {
-    const { context } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "sasasCreate");
-    await runPlugin(context);
-    const supabase = context.adapters.supabase;
-    const commentObject = null;
-    try {
-      await supabase.comment.createComment(STRINGS.HELLO_WORLD, "sasasCreate", 1, commentObject, false, "sasasCreateIssue");
-      throw new Error("Expected method to reject.");
-    } catch (error) {
-      if (error instanceof Error) {
-        expect(error.message).toBe("Comment already exists");
-      }
-    }
-    const comment = (await supabase.comment.getComment("sasasCreate")) as unknown as CommentMock;
-    expect(comment).toBeDefined();
-    expect(comment?.plaintext).toBeDefined();
-    expect(comment?.plaintext).toBe(STRINGS.HELLO_WORLD);
+  it("should create and store embeddings for comments", async () => {
+    const { context, okSpy } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "test");
+    await expect(runPlugin(context)).resolves.toEqual([{ statusCode: 200 }]);
+
+    expect(okSpy).toHaveBeenCalledTimes(1);
+    expect(okSpy).toHaveBeenNthCalledWith(1, "Successfully created comment!", {
+      source_id: "test",
+      type: "comment",
+      plaintext: `${STRINGS.HELLO_WORLD}`,
+      embedding: STRINGS.REMOVED_FOR_BREVITY,
+      metadata: {
+        authorAssociation: "OWNER",
+        authorId: 1,
+        isPrivate: false,
+        issueNodeId: "test_issue1",
+        repoNodeId: "test_repo1",
+      },
+      created_at: expect.stringMatching(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/),
+      modified_at: expect.stringMatching(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/),
+      caller: STRINGS.LOGS_ANON,
+    });
   });
 
-  it("When a comment is updated it should update the database", async () => {
-    const { context } = createContext("Updated Message", 1, 1, 1, 1, "sasasUpdate", "issue_comment.edited");
-    const supabase = context.adapters.supabase;
-    const commentObject = null;
-    await supabase.comment.createComment(STRINGS.HELLO_WORLD, "sasasUpdate", 1, commentObject, false, "sasasUpdateIssue");
-    await runPlugin(context);
-    const comment = (await supabase.comment.getComment("sasasUpdate")) as unknown as CommentMock;
-    expect(comment).toBeDefined();
-    expect(comment?.plaintext).toBeDefined();
-    expect(comment?.plaintext).toBe("Updated Message");
+  it("should update the embeddings for comments", async () => {
+    const { context: ctx } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "test");
+    await runPlugin(ctx);
+
+    const { context, okSpy } = createContext(STRINGS.UPDATED_MESSAGE, 1, 1, 1, 1, "test", "issue_comment.edited");
+    await expect(runPlugin(context)).resolves.toEqual([{ statusCode: 200 }]);
+    const updatedComment = db.issueComments.findFirst({ where: { id: { equals: 1 } } });
+    expect(updatedComment?.body).toEqual(STRINGS.UPDATED_MESSAGE);
+    expect(okSpy).toHaveBeenCalledTimes(1);
+    expect(okSpy).toHaveBeenNthCalledWith(1, "Successfully updated comment!", {
+      source_id: "test",
+      type: "comment",
+      plaintext: `${STRINGS.UPDATED_MESSAGE}`,
+      embedding: STRINGS.REMOVED_FOR_BREVITY,
+      metadata: {
+        authorAssociation: "OWNER",
+        authorId: 1,
+        issueNodeId: "test_issue1",
+        repoNodeId: "test_repo1",
+        isPrivate: false,
+      },
+      modified_at: expect.stringMatching(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/),
+      created_at: expect.stringMatching(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}.\d{3}Z/),
+      caller: STRINGS.LOGS_ANON,
+    });
   });
 
-  it("When a comment is deleted it should delete it from the database", async () => {
-    const { context } = createContext("Text Message", 1, 1, 1, 1, "sasasDelete", "issue_comment.deleted");
-    const supabase = context.adapters.supabase;
-    const commentObject = null;
-    await supabase.comment.createComment(STRINGS.HELLO_WORLD, "sasasDelete", 1, commentObject, false, "sasasDeleteIssue");
-    await runPlugin(context);
-    try {
-      await supabase.comment.getComment("sasasDelete");
-      throw new Error("Expected method to reject.");
-    } catch (error) {
-      if (error instanceof Error) {
-        expect(error.message).toBe("Comment does not exist");
-      }
-    }
+  it("should delete the embeddings for comments", async () => {
+    const { context: ctx } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "test");
+    await runPlugin(ctx);
+
+    const { context, okSpy } = createContext(STRINGS.UPDATED_MESSAGE, 1, 1, 1, 1, "test", "issue_comment.deleted");
+    await expect(runPlugin(context)).resolves.toEqual([{ statusCode: 200 }]);
+    expect(okSpy).toHaveBeenCalledTimes(1);
+    expect(okSpy).toHaveBeenNthCalledWith(1, "Successfully deleted comment!", {
+      commentId: "test",
+      caller: STRINGS.LOGS_ANON,
+    });
+  });
+
+  it("should create and store embeddings for issues", async () => {
+    const { context } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "test", STRINGS.ISSUES_OPENED as SupportedEventsU);
+    await expect(runPlugin(context)).resolves.toEqual([{ statusCode: 200 }, { statusCode: 204 }, { statusCode: 200 }]);
+  });
+
+  it("should update the embeddings for issues", async () => {
+    const { context: ctx } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "test", STRINGS.ISSUES_OPENED as SupportedEventsU);
+    await runPlugin(ctx);
+
+    const { context } = createContext(STRINGS.UPDATED_MESSAGE, 1, 1, 1, 1, "test", "issues.edited");
+    await expect(runPlugin(context)).resolves.toEqual([{ statusCode: 200 }, { statusCode: 204 }, { statusCode: 200 }]);
+  });
+
+  it("should delete the embeddings for issues", async () => {
+    const { context: ctx } = createContext(STRINGS.HELLO_WORLD, 1, 1, 1, 1, "test", STRINGS.ISSUES_OPENED as SupportedEventsU);
+    await runPlugin(ctx);
+
+    const { context, okSpy } = createContext(STRINGS.UPDATED_MESSAGE, 1, 1, 1, 1, "test", "issues.deleted");
+    await expect(runPlugin(context)).resolves.toEqual([{ statusCode: 200 }]);
+    expect(okSpy).toHaveBeenCalledTimes(1);
+    expect(okSpy).toHaveBeenNthCalledWith(1, "Successfully deleted issue!", {
+      issueNodeId: "test_issue1",
+      caller: STRINGS.LOGS_ANON,
+    });
   });
 });
 
@@ -108,9 +153,18 @@ function createContext(
   payloadSenderId: number = 1,
   commentId: number = 1,
   issueOne: number = 1,
-  nodeId: string = "sasas",
-  eventName: Context["eventName"] = "issue_comment.created"
-) {
+  nodeId: string,
+  eventName: SupportedEventsU = "issue_comment.created"
+): {
+  context: Context<"issue_comment.created">;
+  infoSpy: jest.SpyInstance;
+  errorSpy: jest.SpyInstance;
+  debugSpy: jest.SpyInstance;
+  okSpy: jest.SpyInstance;
+  verboseSpy: jest.SpyInstance;
+  repo: Context["payload"]["repository"];
+  issue1: Context["payload"]["issue"];
+} {
   const repo = db.repo.findFirst({ where: { id: { equals: repoId } } }) as unknown as Context["payload"]["repository"];
   const sender = db.users.findFirst({ where: { id: { equals: payloadSenderId } } }) as unknown as Context["payload"]["sender"];
   const issue1 = db.issue.findFirst({ where: { id: { equals: issueOne } } }) as unknown as Context["payload"]["issue"];
@@ -121,7 +175,6 @@ function createContext(
   }) as unknown as unknown as SupportedEvents["issue_comment.created"]["payload"]["comment"];
 
   const context = createContextInner(repo, sender, issue1, comment, eventName);
-  context.adapters = createMockAdapters(context) as unknown as Context["adapters"];
   const infoSpy = jest.spyOn(context.logger, "info");
   const errorSpy = jest.spyOn(context.logger, "error");
   const debugSpy = jest.spyOn(context.logger, "debug");
@@ -150,10 +203,10 @@ function createContextInner(
   sender: Context["payload"]["sender"],
   issue: Context["payload"]["issue"],
   comment: SupportedEvents["issue_comment.created"]["payload"]["comment"],
-  eventName: Context["eventName"] = "issue_comment.created"
-): Context {
-  return {
-    eventName: eventName,
+  eventName: SupportedEventsU
+): Context<"issue_comment.created"> {
+  const ctx = {
+    eventName: eventName as "issue_comment.created",
     payload: {
       action: "created",
       sender: sender,
@@ -162,7 +215,7 @@ function createContextInner(
       comment: comment,
       installation: { id: 1 } as Context["payload"]["installation"],
       organization: { login: STRINGS.USER_1 } as Context["payload"]["organization"],
-    } as Context["payload"],
+    } as Context<"issue_comment.created">["payload"],
     config: {
       warningThreshold: 0.75,
       matchThreshold: 0.95,
@@ -170,7 +223,15 @@ function createContextInner(
     },
     adapters: {} as Context["adapters"],
     logger: new Logs("debug"),
-    env: {} as Env,
+    env: {
+      SUPABASE_KEY: "test",
+      // fake DB URL
+      SUPABASE_URL: "https://fymwbgfvpmbhkqzlpmfdr.supabase.co/",
+      VOYAGEAI_API_KEY: "test",
+    } as Env,
     octokit: octokit,
   };
+
+  ctx.adapters = createAdapters(createClient(ctx.env.SUPABASE_URL, ctx.env.SUPABASE_KEY), new VoyageAIClient({ apiKey: ctx.env.VOYAGEAI_API_KEY }), ctx);
+  return ctx;
 }

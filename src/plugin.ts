@@ -1,53 +1,25 @@
 import { Octokit } from "@octokit/rest";
 import { Env, PluginInputs } from "./types";
 import { Context } from "./types";
-import { isIssueCommentEvent, isIssueEvent } from "./types/typeguards";
 import { LogLevel, Logs } from "@ubiquity-dao/ubiquibot-logger";
 import { Database } from "./types/database";
 import { createAdapters } from "./adapters";
 import { createClient } from "@supabase/supabase-js";
-import { addComments } from "./handlers/add-comments";
-import { updateComment } from "./handlers/update-comments";
-import { deleteComment } from "./handlers/delete-comments";
 import { VoyageAIClient } from "voyageai";
-import { deleteIssues } from "./handlers/delete-issue";
-import { addIssue } from "./handlers/add-issue";
-import { updateIssue } from "./handlers/update-issue";
-import { issueChecker } from "./handlers/issue-deduplication";
-import { issueMatching } from "./handlers/issue-matching";
+import { proxyCallbacks } from "./proxy-callbacks";
 
 /**
  * The main plugin function. Split for easier testing.
  */
 export async function runPlugin(context: Context) {
   const { logger, eventName } = context;
-  if (isIssueCommentEvent(context)) {
-    switch (eventName) {
-      case "issue_comment.created":
-        return await addComments(context);
-      case "issue_comment.deleted":
-        return await deleteComment(context);
-      case "issue_comment.edited":
-        return await updateComment(context);
-    }
-  } else if (isIssueEvent(context)) {
-    switch (eventName) {
-      case "issues.opened":
-        await issueChecker(context);
-        await addIssue(context);
-        return await issueMatching(context);
-      case "issues.edited":
-        await issueChecker(context);
-        await updateIssue(context);
-        return await issueMatching(context);
-      case "issues.deleted":
-        return await deleteIssues(context);
-    }
-  } else if (eventName == "issues.labeled") {
-    return await issueMatching(context);
-  } else {
-    logger.error(`Unsupported event: ${eventName}`);
+
+  try {
+    return proxyCallbacks(context)[eventName];
+  } catch (err) {
+    logger.error(`Error running plugin`, { err });
   }
+
   logger.ok(`Exiting plugin`);
 }
 

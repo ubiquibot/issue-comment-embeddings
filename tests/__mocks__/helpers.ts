@@ -25,6 +25,7 @@ export async function setupTests() {
     name: STRINGS.TEST_REPO,
     full_name: `${STRINGS.USER_1}/${STRINGS.TEST_REPO}`,
     private: false,
+    node_id: "test_repo1",
     owner: {
       login: STRINGS.USER_1,
       id: 1,
@@ -36,6 +37,7 @@ export async function setupTests() {
   db.issue.create({
     id: 1,
     number: 1,
+    node_id: "test_issue1",
     title: "First Issue",
     body: "This is the body of the first issue.",
     user: {
@@ -67,6 +69,7 @@ export async function setupTests() {
   db.issue.create({
     id: 2,
     number: 2,
+    node_id: "test_issue2",
     title: "Second Issue",
     body: "This is the body of the second issue.",
     user: {
