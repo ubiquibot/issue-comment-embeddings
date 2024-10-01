@@ -64,6 +64,26 @@ export function createMockAdapters(context: Context) {
           return commentMap.get(commentNodeId);
         }),
       } as unknown as Comment,
+
+      issue: {
+        findSimilarIssues: jest.fn(async (issueContent: string) => {
+          if (issueContent && issueContent.length > 0) {
+            return [
+              {
+                node: {
+                  title: "Test Title",
+                  url: "https://www.github.com",
+                },
+                similarity: "0.95",
+              },
+            ];
+          }
+          return [];
+        }),
+      },
+      fetchComments: jest.fn(async (issueId: string) => {
+        return Array.from(commentMap.values()).filter((comment) => comment.issue_id === issueId);
+      }),
     },
     voyage: {
       embedding: {

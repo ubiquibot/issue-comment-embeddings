@@ -1,5 +1,6 @@
 import { http, HttpResponse } from "msw";
 import { db } from "./db";
+
 /**
  * Intercepts the routes and returns a custom payload
  */
@@ -48,6 +49,21 @@ export const handlers = [
     item.body = body;
     return HttpResponse.json(item);
   }),
+  //Update issue
+  http.patch("https://api.github.com/repos/:owner/:repo/issues/:issue_number", async ({ params: { issue_number: issueNumber }, request }) => {
+    const { body } = await getValue(request.body);
+    const item = db.issue.findFirst({ where: { number: { equals: Number(issueNumber) } } });
+    if (!item) {
+      return new HttpResponse(null, { status: 404 });
+    }
+    item.body = body;
+    return HttpResponse.json(item);
+  }),
+
+  //Fetch comments for the issue
+  http.get("https://api.github.com/repos/:owner/:repo/issues/:issue_number/comments", ({ params: { issue_id: issueId } }) =>
+    HttpResponse.json(db.issueComments.findMany({ where: { issue_id: { equals: String(issueId) } } }))
+  ),
 ];
 
 async function getValue(body: ReadableStream<Uint8Array> | null) {
@@ -63,4 +79,5 @@ async function getValue(body: ReadableStream<Uint8Array> | null) {
       }
     }
   }
+  return {};
 }
