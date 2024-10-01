@@ -10,7 +10,7 @@ export async function addIssue(context: Context) {
   const markdown = payload.issue.body + " " + payload.issue.title || null;
   const authorId = payload.issue.user?.id || -1;
   const nodeId = payload.issue.node_id;
-  const isPrivate = !context.config.redactPrivateRepoComments && payload.repository.private;
+  const isPrivate = context.config.redactPrivateRepoComments;
 
   try {
     if (!markdown) {

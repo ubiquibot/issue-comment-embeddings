@@ -10,7 +10,7 @@ export async function addComments(context: Context) {
   const markdown = payload.comment.body;
   const authorId = payload.comment.user?.id || -1;
   const nodeId = payload.comment.node_id;
-  const isPrivate = context.config.redactPrivateRepoComments ? false : payload.repository.private;
+  const isPrivate = context.config.redactPrivateRepoComments;
   const issueId = payload.issue.node_id;
 
   try {
