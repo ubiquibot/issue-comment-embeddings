@@ -8,7 +8,7 @@ export async function updateComment(context: Context) {
   } = context;
   const { payload } = context as { payload: CommentPayload };
   const nodeId = payload.comment.node_id;
-  const isPrivate = payload.repository.private;
+  const isPrivate = !context.config.redactPrivateRepoComments && payload.repository.private;
   const markdown = payload.comment.body || null;
   // Fetch the previous comment and update it in the db
   try {

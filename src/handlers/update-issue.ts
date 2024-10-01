@@ -9,7 +9,7 @@ export async function updateIssue(context: Context) {
   const { payload } = context as { payload: IssuePayload };
   const payloadObject = payload;
   const nodeId = payload.issue.node_id;
-  const isPrivate = payload.repository.private;
+  const isPrivate = !context.config.redactPrivateRepoComments && payload.repository.private;
   const markdown = payload.issue.body + " " + payload.issue.title || null;
   // Fetch the previous issue and update it in the db
   try {
