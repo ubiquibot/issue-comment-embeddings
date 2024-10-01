@@ -17,6 +17,7 @@ To set up the `.dev.vars` file, you will need to provide the following variables
     matchThreshold: 0.95
     warningThreshold: 0.75
     jobMatchingThreshold: 0.75
+    redactPrivateRepoComments: false
 ```
 
 

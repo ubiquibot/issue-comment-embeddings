@@ -15,4 +15,6 @@ export const STRINGS = {
   CONFIGURABLE_RESPONSE: "Hello, Code Reviewers!",
   INVALID_COMMAND: "/Goodbye",
   COMMENT_DOES_NOT_EXIST: "Comment does not exist",
+  SIMILAR_ISSUE: "Similar issue",
+  SIMILAR_ISSUE_URL: "Related issue URL",
 };

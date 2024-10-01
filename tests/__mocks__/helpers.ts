@@ -1,6 +1,16 @@
 import { db } from "./db";
 import { STRINGS } from "./strings";
 import usersGet from "./users-get.json";
+import threshold95_1 from "../__sample__/match_threshold_95_1.json";
+import threshold95_2 from "../__sample__/match_threshold_95_2.json";
+import warning75_1 from "../__sample__/warning_threshold_75_1.json";
+import warning75_2 from "../__sample__/warning_threshold_75_2.json";
+import taskComplete from "../__sample__/task_complete.json";
+
+interface SampleIssue {
+  title: string;
+  issue_body: string;
+}
 
 /**
  * Helper function to setup tests.
@@ -34,7 +44,7 @@ export async function setupTests() {
 
   // Insert issues
   db.issue.create({
-    id: 1,
+    node_id: "1", //Node ID
     number: 1,
     title: "First Issue",
     body: "This is the body of the first issue.",
@@ -65,7 +75,7 @@ export async function setupTests() {
   });
 
   db.issue.create({
-    id: 2,
+    node_id: "2", //Node ID
     number: 2,
     title: "Second Issue",
     body: "This is the body of the second issue.",
@@ -94,6 +104,61 @@ export async function setupTests() {
     },
     timeline_url: "",
   });
+}
+
+export function createIssue(
+  issueBody: string,
+  issueNodeId: string,
+  issueTitle: string,
+  issueNumber: number,
+  issueUser: {
+    login: string;
+    id: number;
+  },
+  issueState: string,
+  issueCloseReason: string | null,
+  repo: string,
+  owner: string
+) {
+  const existingIssue = db.issue.findFirst({
+    where: {
+      node_id: {
+        equals: issueNodeId,
+      },
+    },
+  });
+  if (existingIssue) {
+    db.issue.update({
+      where: {
+        node_id: {
+          equals: issueNodeId,
+        },
+      },
+      data: {
+        body: issueBody,
+        title: issueTitle,
+        user: issueUser,
+        updated_at: new Date().toISOString(),
+        owner: owner,
+        repo: repo,
+      },
+    });
+  } else {
+    db.issue.create({
+      node_id: issueNodeId,
+      body: issueBody,
+      title: issueTitle,
+      user: issueUser,
+      number: issueNumber,
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      author_association: "OWNER",
+      state: issueState,
+      state_reason: issueCloseReason,
+      owner: owner,
+      repo: repo,
+    });
+  }
 }
 
 export function createComment(comment: string, commentId: number, nodeId: string) {
@@ -131,5 +196,18 @@ export function createComment(comment: string, commentId: number, nodeId: string
       updated_at: new Date().toISOString(),
       author_association: "OWNER",
     });
+  }
+}
+
+export function fetchSimilarIssues(type?: string): SampleIssue[] {
+  switch (type) {
+    case "warning_threshold_75":
+      return [warning75_1, warning75_2];
+    case "match_threshold_95":
+      return [threshold95_1, threshold95_2];
+    case "task_complete":
+      return [taskComplete];
+    default:
+      return [threshold95_1, threshold95_2];
   }
 }

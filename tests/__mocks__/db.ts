@@ -62,7 +62,7 @@ export const db = factory({
     deployments_url: String,
   },
   issue: {
-    id: primaryKey(Number),
+    node_id: primaryKey(String),
     number: Number,
     title: String,
     body: String,
@@ -78,6 +78,7 @@ export const db = factory({
     comments: Number,
     labels: Array,
     state: String,
+    closed: Boolean,
     locked: Boolean,
     assignee: nullable({
       login: String,
@@ -136,6 +137,7 @@ export const db = factory({
       login: String,
       id: Number,
     },
+    issue_id: String,
     author_association: String,
     html_url: String,
     issue_url: String,
