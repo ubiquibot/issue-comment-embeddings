@@ -36,21 +36,29 @@ export function createMockAdapters(context: Context) {
             commentMap.set(commentNodeId, { id: commentNodeId, plaintext, author_id: authorId, embedding, issue_id: issueId });
           }
         ),
-        updateComment: jest.fn(async (plaintext: string | null, commentNodeId: string, payload: Record<string, unknown> | null, isPrivate: boolean) => {
-          if (!commentMap.has(commentNodeId)) {
-            throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
+        updateComment: jest.fn(
+          async (
+            plaintext: string | null,
+            commentNodeId: string,
+            authorId: number,
+            payload: Record<string, unknown> | null,
+            isPrivate: boolean,
+            issueId: string
+          ) => {
+            if (!commentMap.has(commentNodeId)) {
+              throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
+            }
+            const originalComment = commentMap.get(commentNodeId);
+            if (!originalComment) {
+              throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
+            }
+            const embedding = await context.adapters.voyage.embedding.createEmbedding(plaintext);
+            if (isPrivate) {
+              plaintext = null;
+            }
+            commentMap.set(commentNodeId, { id: issueId, plaintext, author_id: authorId, embedding, payload });
           }
-          const originalComment = commentMap.get(commentNodeId);
-          if (!originalComment) {
-            throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
-          }
-          const { id, author_id } = originalComment;
-          const embedding = await context.adapters.voyage.embedding.createEmbedding(plaintext);
-          if (isPrivate) {
-            plaintext = null;
-          }
-          commentMap.set(commentNodeId, { id, plaintext, author_id, embedding });
-        }),
+        ),
         deleteComment: jest.fn(async (commentNodeId: string) => {
           if (!commentMap.has(commentNodeId)) {
             throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);

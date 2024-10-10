@@ -24,17 +24,12 @@ export interface IssueGraphqlResponse {
   similarity: number;
 }
 
-const commentBuilder = (matchResultArray: Map<string, Array<string>>): string => {
-  const commentLines: string[] = [">[!NOTE]", ">The following contributors may be suitable for this task:"];
-  matchResultArray.forEach((issues, assignee) => {
-    commentLines.push(`>### [${assignee}](https://www.github.com/${assignee})`);
-    issues.forEach((issue) => {
-      commentLines.push(issue);
-    });
-  });
-  return commentLines.join("\n");
-};
-
+/**
+ * Checks if the current issue is a duplicate of an existing issue.
+ * If a similar issue is found, a comment is added to the current issue.
+ * @param context The context object
+ * @returns True if a similar issue is found, false otherwise
+ **/
 export async function issueMatching(context: Context) {
   const {
     logger,
@@ -45,15 +40,10 @@ export async function issueMatching(context: Context) {
   const issue = payload.issue;
   const issueContent = issue.body + issue.title;
   const commentStart = ">The following contributors may be suitable for this task:";
-
-  // On Adding the labels to the issue, the bot should
-  // create a new comment with users who completed task most similar to the issue
-  // if the comment already exists, it should update the comment with the new users
   const matchResultArray: Map<string, Array<string>> = new Map();
   const similarIssues = await supabase.issue.findSimilarIssues(issueContent, context.config.jobMatchingThreshold, issue.node_id);
   if (similarIssues && similarIssues.length > 0) {
-    // Find the most similar issue and the users who completed the task
-    similarIssues.sort((a, b) => b.similarity - a.similarity);
+    similarIssues.sort((a, b) => b.similarity - a.similarity); // Sort by similarity
     const fetchPromises = similarIssues.map(async (issue) => {
       const issueObject: IssueGraphqlResponse = await context.octokit.graphql(
         `query ($issueNodeId: ID!) {
@@ -84,7 +74,6 @@ export async function issueMatching(context: Context) {
       issueObject.similarity = issue.similarity;
       return issueObject;
     });
-
     const issueList = await Promise.all(fetchPromises);
     issueList.forEach((issue) => {
       if (issue.node.closed && issue.node.stateReason === "COMPLETED" && issue.node.assignees.nodes.length > 0) {
@@ -147,4 +136,20 @@ export async function issueMatching(context: Context) {
 
   logger.ok(`Successfully created issue comment!`);
   logger.debug(`Exiting issueMatching handler`);
+}
+
+/**
+ * Builds the comment to be added to the issue
+ * @param matchResultArray The array of issues to be matched
+ * @returns The comment to be added to the issue
+ */
+function commentBuilder(matchResultArray: Map<string, Array<string>>): string {
+  const commentLines: string[] = [">[!NOTE]", ">The following contributors may be suitable for this task:"];
+  matchResultArray.forEach((issues, assignee) => {
+    commentLines.push(`>### [${assignee}](https://www.github.com/${assignee})`);
+    issues.forEach((issue) => {
+      commentLines.push(issue);
+    });
+  });
+  return commentLines.join("\n");
 }

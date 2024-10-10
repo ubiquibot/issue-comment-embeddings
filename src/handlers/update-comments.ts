@@ -7,15 +7,18 @@ export async function updateComment(context: Context) {
     adapters: { supabase },
   } = context;
   const { payload } = context as { payload: CommentPayload };
+  const markdown = payload.comment.body;
+  const authorId = payload.comment.user?.id || -1;
   const nodeId = payload.comment.node_id;
   const isPrivate = payload.repository.private;
-  const markdown = payload.comment.body || null;
+  const issueId = payload.issue.node_id;
+
   // Fetch the previous comment and update it in the db
   try {
     if (!markdown) {
       throw new Error("Comment body is empty");
     }
-    await supabase.comment.updateComment(markdown, nodeId, payload, isPrivate);
+    await supabase.comment.updateComment(markdown, nodeId, authorId, payload, isPrivate, issueId);
   } catch (error) {
     if (error instanceof Error) {
       logger.error(`Error updating comment:`, { error: error, stack: error.stack });

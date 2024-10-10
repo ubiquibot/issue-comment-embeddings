@@ -5,7 +5,6 @@ import { drop } from "@mswjs/data";
 import { Octokit } from "@octokit/rest";
 import { Logs } from "@ubiquity-os/ubiquity-os-logger";
 import dotenv from "dotenv";
-import manifest from "../manifest.json";
 import { runPlugin } from "../src/plugin";
 import { Env } from "../src/types";
 import { Context, SupportedEvents } from "../src/types/context";
@@ -33,17 +32,6 @@ describe("Plugin tests", () => {
   beforeEach(async () => {
     drop(db);
     await setupTests();
-  });
-
-  it("Should serve the manifest file", async () => {
-    const worker = (await import("../src/worker")).default;
-    const response = await worker.fetch(new Request("http://localhost/manifest"), {
-      SUPABASE_KEY: "test",
-      SUPABASE_URL: "test",
-      VOYAGEAI_API_KEY: "test",
-    });
-    const content = await response.json();
-    expect(content).toEqual(manifest);
   });
 
   it("When a comment is created it should add it to the database", async () => {

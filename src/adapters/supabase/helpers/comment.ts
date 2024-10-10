@@ -37,7 +37,7 @@ export class Comment extends SuperSupabase {
     } else {
       //Create the embedding for this comment
       const embedding = await this.context.adapters.voyage.embedding.createEmbedding(markdown);
-      let plaintext: string | null = markdownToPlainText(markdown || "");
+      let plaintext: string | null = markdownToPlainText(markdown);
       if (isPrivate) {
         markdown = null as string | null;
         payload = null as Record<string, unknown> | null;
@@ -54,21 +54,34 @@ export class Comment extends SuperSupabase {
     this.context.logger.info("Comment created successfully");
   }
 
-  async updateComment(markdown: string | null, commentNodeId: string, payload: Record<string, unknown> | null, isPrivate: boolean) {
+  async updateComment(
+    markdown: string | null,
+    commentNodeId: string,
+    authorId: number,
+    payload: Record<string, unknown> | null,
+    isPrivate: boolean,
+    issueId: string
+  ) {
     //Create the embedding for this comment
     const embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(markdown));
-    let plaintext: string | null = markdownToPlainText(markdown || "");
+    let plaintext: string | null = markdownToPlainText(markdown);
     if (isPrivate) {
       markdown = null as string | null;
       payload = null as Record<string, unknown> | null;
       plaintext = null as string | null;
     }
-    const { error } = await this.supabase
-      .from("issue_comments")
-      .update({ markdown, plaintext, embedding: embedding, payload, modified_at: new Date() })
-      .eq("id", commentNodeId);
-    if (error) {
-      this.context.logger.error("Error updating comment", error);
+    const comments = await this.getComment(commentNodeId);
+    if (comments && comments.length == 0) {
+      this.context.logger.info("Comment does not exist, creating a new one");
+      await this.createComment(markdown, commentNodeId, authorId, payload, isPrivate, issueId);
+    } else {
+      const { error } = await this.supabase
+        .from("issue_comments")
+        .update({ markdown, plaintext, embedding: embedding, payload, modified_at: new Date() })
+        .eq("id", commentNodeId);
+      if (error) {
+        this.context.logger.error("Error updating comment", error);
+      }
     }
   }
 

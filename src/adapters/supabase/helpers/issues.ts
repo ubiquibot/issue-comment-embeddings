@@ -37,7 +37,7 @@ export class Issues extends SuperSupabase {
       return;
     } else {
       const embedding = await this.context.adapters.voyage.embedding.createEmbedding(markdown);
-      let plaintext: string | null = markdownToPlainText(markdown || "");
+      let plaintext: string | null = markdownToPlainText(markdown);
       if (isPrivate) {
         payload = null;
         markdown = null;
@@ -52,21 +52,24 @@ export class Issues extends SuperSupabase {
     this.context.logger.info("Issue created successfully");
   }
 
-  async updateIssue(markdown: string | null, issueNodeId: string, payload: Record<string, unknown> | null, isPrivate: boolean) {
-    //Create the embedding for this comment
+  async updateIssue(markdown: string | null, issueNodeId: string, payload: Record<string, unknown> | null, isPrivate: boolean, authorId: number) {
     const embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(markdown));
-    let plaintext: string | null = markdownToPlainText(markdown || "");
+    let plaintext: string | null = markdownToPlainText(markdown);
     if (isPrivate) {
-      markdown = null as string | null;
-      payload = null as Record<string, unknown> | null;
-      plaintext = null as string | null;
+      markdown = null;
+      payload = null;
+      plaintext = null;
     }
-    const { error } = await this.supabase
-      .from("issues")
-      .update({ markdown, plaintext, embedding: embedding, payload, modified_at: new Date() })
-      .eq("id", issueNodeId);
-    if (error) {
-      this.context.logger.error("Error updating comment", error);
+    const issues = await this.getIssue(issueNodeId);
+    if (issues && issues.length == 0) {
+      this.context.logger.info("Issue does not exist, creating a new one");
+      await this.createIssue(issueNodeId, payload, isPrivate, markdown, authorId);
+    } else {
+      const { error } = await this.supabase.from("issues").update({ markdown, plaintext, embedding, payload, modified_at: new Date() }).eq("id", issueNodeId);
+
+      if (error) {
+        this.context.logger.error("Error updating comment", error);
+      }
     }
   }
 
@@ -96,6 +99,7 @@ export class Issues extends SuperSupabase {
       current_id: currentId,
       query_embedding: embedding,
       threshold: threshold,
+      top_k: 5,
     });
     if (error) {
       this.context.logger.error("Error finding similar issues", error);

@@ -1,5 +1,6 @@
 import { Context } from "../types";
 import { IssuePayload } from "../types/payload";
+import { removeFootnotes } from "./issue-deduplication";
 
 export async function addIssue(context: Context) {
   const {
@@ -16,7 +17,8 @@ export async function addIssue(context: Context) {
     if (!markdown) {
       throw new Error("Issue body is empty");
     }
-    await supabase.issue.createIssue(nodeId, payload, isPrivate, markdown, authorId);
+    const cleanedIssue = removeFootnotes(markdown);
+    await supabase.issue.createIssue(nodeId, payload, isPrivate, cleanedIssue, authorId);
   } catch (error) {
     if (error instanceof Error) {
       logger.error(`Error creating issue:`, { error: error, stack: error.stack });

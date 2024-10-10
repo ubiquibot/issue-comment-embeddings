@@ -32,8 +32,8 @@ export async function runPlugin(context: Context) {
   } else if (isIssueEvent(context)) {
     switch (eventName) {
       case "issues.opened":
-        await issueChecker(context);
         await addIssue(context);
+        await issueChecker(context);
         return await issueMatching(context);
       case "issues.edited":
         await issueChecker(context);
