@@ -1,20 +1,19 @@
 import { Octokit } from "@octokit/rest";
-import { Env, PluginInputs } from "./types";
-import { Context } from "./types";
-import { isIssueCommentEvent, isIssueEvent } from "./types/typeguards";
-import { LogLevel, Logs } from "@ubiquity-dao/ubiquibot-logger";
-import { Database } from "./types/database";
-import { createAdapters } from "./adapters";
 import { createClient } from "@supabase/supabase-js";
-import { addComments } from "./handlers/add-comments";
-import { updateComment } from "./handlers/update-comments";
-import { deleteComment } from "./handlers/delete-comments";
+import { LogLevel, Logs } from "@ubiquity-os/ubiquity-os-logger";
 import { VoyageAIClient } from "voyageai";
-import { deleteIssues } from "./handlers/delete-issue";
+import { createAdapters } from "./adapters";
+import { addComments } from "./handlers/add-comments";
 import { addIssue } from "./handlers/add-issue";
-import { updateIssue } from "./handlers/update-issue";
+import { deleteComment } from "./handlers/delete-comments";
+import { deleteIssues } from "./handlers/delete-issue";
 import { issueChecker } from "./handlers/issue-deduplication";
 import { issueMatching } from "./handlers/issue-matching";
+import { updateComment } from "./handlers/update-comments";
+import { updateIssue } from "./handlers/update-issue";
+import { Context, Env, PluginInputs } from "./types";
+import { Database } from "./types/database";
+import { isIssueCommentEvent, isIssueEvent } from "./types/typeguards";
 
 /**
  * The main plugin function. Split for easier testing.

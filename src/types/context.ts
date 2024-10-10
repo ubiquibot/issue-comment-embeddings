@@ -1,9 +1,9 @@
 import { Octokit } from "@octokit/rest";
 import { EmitterWebhookEvent as WebhookEvent, EmitterWebhookEventName as WebhookEventName } from "@octokit/webhooks";
+import { Logs } from "@ubiquity-os/ubiquity-os-logger";
+import { createAdapters } from "../adapters";
 import { Env } from "./env";
 import { PluginSettings } from "./plugin-inputs";
-import { Logs } from "@ubiquity-dao/ubiquibot-logger";
-import { createAdapters } from "../adapters";
 
 /**
  * Update `manifest.json` with any events you want to support like so:

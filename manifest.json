@@ -1,5 +1,36 @@
 {
   "name": "Generate vector embeddings",
   "description": "Enables the storage, updating, and deletion of issue comment embeddings.",
-  "ubiquity:listeners": ["issue_comment.created", "issue_comment.edited", "issue_comment.deleted", "issues.opened", "issues.edited", "issues.deleted", "issues.labeled"]
+  "ubiquity:listeners": [
+    "issue_comment.created",
+    "issue_comment.edited",
+    "issue_comment.deleted",
+    "issues.opened",
+    "issues.edited",
+    "issues.deleted",
+    "issues.labeled"
+  ],
+  "configuration": {
+    "default": {},
+    "type": "object",
+    "properties": {
+      "matchThreshold": {
+        "default": 0.95,
+        "type": "number"
+      },
+      "warningThreshold": {
+        "default": 0.75,
+        "type": "number"
+      },
+      "jobMatchingThreshold": {
+        "default": 0.75,
+        "type": "number"
+      }
+    },
+    "required": [
+      "matchThreshold",
+      "warningThreshold",
+      "jobMatchingThreshold"
+    ]
+  }
 }

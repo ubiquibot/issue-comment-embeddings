@@ -28,7 +28,7 @@ export async function run() {
 
   await plugin(inputs, env);
 
-  return returnDataToKernel(inputs.authToken, inputs.stateId, {});
+  return returnDataToKernel(process.env.GITHUB_TOKEN, inputs.stateId, {});
 }
 
 async function returnDataToKernel(repoToken: string, stateId: string, output: object) {

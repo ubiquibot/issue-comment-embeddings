@@ -1,18 +1,16 @@
-import { Value } from "@sinclair/typebox/value";
-import { plugin } from "./plugin";
-import { Env, envValidator, pluginSettingsSchema, pluginSettingsValidator } from "./types";
 import manifest from "../manifest.json";
+import { validateAndDecodeSchemas } from "./handlers/validator";
+import { plugin } from "./plugin";
+import { Env } from "./types";
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
-      if (request.method === "GET") {
-        const url = new URL(request.url);
-        if (url.pathname === "/manifest.json") {
-          return new Response(JSON.stringify(manifest), {
-            headers: { "content-type": "application/json" },
-          });
-        }
+      const url = new URL(request.url);
+      if (url.pathname === "/manifest.json" && request.method === "GET") {
+        return new Response(JSON.stringify(manifest), {
+          headers: { "content-type": "application/json" },
+        });
       }
       if (request.method !== "POST") {
         return new Response(JSON.stringify({ error: `Only POST requests are supported.` }), {
@@ -29,33 +27,10 @@ export default {
       }
 
       const webhookPayload = await request.json();
-      const settings = Value.Decode(pluginSettingsSchema, Value.Default(pluginSettingsSchema, webhookPayload.settings));
+      const { decodedSettings, decodedEnv } = validateAndDecodeSchemas(env, webhookPayload.settings);
 
-      if (!pluginSettingsValidator.test(settings)) {
-        const errors: string[] = [];
-        for (const error of pluginSettingsValidator.errors(settings)) {
-          console.error(error);
-          errors.push(`${error.path}: ${error.message}`);
-        }
-        return new Response(JSON.stringify({ error: `Error: "Invalid settings provided. ${errors.join("; ")}"` }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      }
-      if (!envValidator.test(env)) {
-        const errors: string[] = [];
-        for (const error of envValidator.errors(env)) {
-          console.error(error);
-          errors.push(`${error.path}: ${error.message}`);
-        }
-        return new Response(JSON.stringify({ error: `Error: "Invalid environment provided. ${errors.join("; ")}"` }), {
-          status: 400,
-          headers: { "content-type": "application/json" },
-        });
-      }
-
-      webhookPayload.settings = settings;
-      await plugin(webhookPayload, env);
+      webhookPayload.settings = decodedSettings;
+      await plugin(webhookPayload, decodedEnv);
       return new Response(JSON.stringify("OK"), { status: 200, headers: { "content-type": "application/json" } });
     } catch (error) {
       return handleUncaughtError(error);
@@ -63,8 +38,8 @@ export default {
   },
 };
 
-function handleUncaughtError(error: unknown) {
-  console.error(error);
+function handleUncaughtError(errors: unknown) {
+  console.error(errors);
   const status = 500;
-  return new Response(JSON.stringify({ error }), { status: status, headers: { "content-type": "application/json" } });
+  return new Response(JSON.stringify(errors), { status: status, headers: { "content-type": "application/json" } });
 }

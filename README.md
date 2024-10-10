@@ -1,6 +1,6 @@
-# `@ubiquibot/issue-comment-embeddings`
+# `@ubiquity-os/issue-comment-embeddings`
 
-This is a plugin for [Ubiquibot](https://github.com/ubiquity/ubiquibot-kernel). It listens for issue comments, and adds them to a vector store. It handles comment edits and deletions as well.
+This is a plugin for [Ubiquibot](https://github.com/ubiquity-os/ubiquity-os-kernel). It listens for issue comments, and adds them to a vector store. It handles comment edits and deletions as well.
 
 ## Configuration
 - Host the plugin on a server that Ubiquibot can access.
@@ -10,9 +10,9 @@ To set up the `.dev.vars` file, you will need to provide the following variables
 - `VOYAGEAI_API_KEY`: The API key for Voyage.
 
 ## Usage
-- Add the following to your `.ubiquibot-config.yml` file with the appropriate URL:
+- Add the following to your `.ubiquity-os.config.yml` file with the appropriate URL:
 ```yaml
-- plugin: ubiquity-os-marketplace/generate-vector-embeddings
+- plugin: https://ubiquity-os-comment-vector-embeddings-main.ubiquity.workers.dev
   with:
     matchThreshold: 0.95
     warningThreshold: 0.75
