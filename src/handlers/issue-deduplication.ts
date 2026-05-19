@@ -84,6 +84,7 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
       }
+      await createDuplicateMarkerComment(context, payload, matchIssues);
       await octokit.rest.issues.update({
         owner: payload.repository.owner.login,
         repo: payload.repository.name,
@@ -117,6 +118,31 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     }
   }
   context.logger.info("No similar issues found");
+}
+
+async function createDuplicateMarkerComment(
+  context: Context<"issues.opened" | "issues.edited">,
+  payload: Context<"issues.opened" | "issues.edited">["payload"],
+  matchIssues: IssueGraphqlResponse[]
+) {
+  const duplicateIssue = [...matchIssues].sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity))[0];
+  if (!duplicateIssue) {
+    return;
+  }
+  try {
+    await context.octokit.rest.issues.createComment({
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      issue_number: payload.issue.number,
+      body: `Duplicate of #${duplicateIssue.node.number}`,
+    });
+  } catch (error) {
+    context.logger.warn("Failed to create GitHub duplicate marker comment.", {
+      issueNumber: payload.issue.number,
+      duplicateIssueNumber: duplicateIssue.node.number,
+      error: error instanceof Error ? error : { stack: String(error) },
+    });
+  }
 }
 
 function matchRepoOrgToSimilarIssueRepoOrg(repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
@@ -228,7 +254,7 @@ async function handleSimilarIssuesComment(
     }
 
     // Add new footnote to the array
-    footnotes.push(`${footnoteRef}: ⚠ ${issue.similarity}% possible duplicate - [${issue.node.title}](${modifiedUrl}#${issue.node.number})\n\n`);
+    footnotes.push(`${footnoteRef}: ? ${issue.similarity}% possible duplicate - [${issue.node.title}](${modifiedUrl}#${issue.node.number})\n\n`);
   });
   if (orphanRefs.length > 0) {
     updatedBody = appendFootnoteRefsToFirstLine(updatedBody, orphanRefs);
@@ -401,7 +427,7 @@ export async function cleanContent(context: Context, content: string): Promise<s
  * @returns True if a duplicate footnote exists, false otherwise
  */
 export function checkIfDuplicateFootNoteExists(content: string): boolean {
-  const footnoteDefRegex = /\[\^(\d+)\^\]: ⚠ \d+% possible duplicate - [^\n]+(\n|$)/g;
+  const footnoteDefRegex = /\[\^(\d+)\^\]: ? \d+% possible duplicate - [^\n]+(\n|$)/g;
   const footnotes = content.match(footnoteDefRegex);
   return !!footnotes;
 }

@@ -183,7 +183,7 @@ describe("Plugin tests", () => {
         // Find the most similar sentence (first sentence in this case)
         const updatedBody =
           warningThresholdIssue2.issue_body.replace(STRINGS.SIMILAR_ISSUE_TITLE, `${STRINGS.SIMILAR_ISSUE_TITLE}[^01^]`) +
-          `\n\n[^01^]: ⚠ 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n\n`;
+          `\n\n[^01^]: ? 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n\n`;
 
         db.issue.update({
           where: {
@@ -199,7 +199,7 @@ describe("Plugin tests", () => {
 
       const issue = db.issue.findFirst({ where: { node_id: { equals: "warning2" } } }) as unknown as Context["payload"]["issue"];
       expect(issue.state).toBe("open");
-      expect(issue.body).toContain(`[^01^]: ⚠ 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
+      expect(issue.body).toContain(`[^01^]: ? 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
     }
   );
 
@@ -259,6 +259,10 @@ describe("Plugin tests", () => {
       );
     });
 
+    context2.octokit.rest.issues.createComment = mock(async (params: { issue_number: number; body: string }) => {
+      createComment(params.body, 11, "match2", params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
     context2.octokit.rest.issues.update = mock(
       async (params: { owner: string; repo: string; issue_number: number; body?: string; state?: string; state_reason?: string }) => {
         const updatedBody = `${matchThresholdIssue2.issue_body}\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n> - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n`;
@@ -282,6 +286,12 @@ describe("Plugin tests", () => {
     expect(issue.body).toContain(">[!CAUTION]");
     expect(issue.body).toContain("This issue may be a duplicate of the following issues:");
     expect(issue.body).toContain(`- [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
+    expect(context2.octokit.rest.issues.createComment).toHaveBeenCalledWith({
+      owner: STRINGS.USER_1,
+      repo: STRINGS.TEST_REPO,
+      issue_number: 4,
+      body: "Duplicate of #3",
+    });
   });
 
   it("When issue matching is triggered, it should suggest contributors based on similarity", async () => {
