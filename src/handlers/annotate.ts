@@ -23,12 +23,31 @@ interface CommentGraphqlResponse {
   mostSimilarSentence: { sentence: string; similarity: number; index: number };
 }
 
-export async function annotate(context: Context<"issue_comment.created">, commentId: string | null, scope: string) {
+export interface AnnotateCommentTarget {
+  id: string;
+  owner?: string;
+  repo?: string;
+}
+
+function isTargetInScope(scope: string, currentOwner: string, targetOwner: string, currentRepo: string, targetRepo: string): boolean {
+  switch (scope) {
+    case "global":
+      return true;
+    case "org":
+      return currentOwner === targetOwner;
+    case "repo":
+      return currentOwner === targetOwner && currentRepo === targetRepo;
+    default:
+      return false;
+  }
+}
+
+export async function annotate(context: Context<"issue_comment.created">, commentTarget: AnnotateCommentTarget | null, scope: string) {
   const { logger, octokit, payload } = context;
 
   const repository = payload.repository;
 
-  if (!commentId) {
+  if (!commentTarget) {
     const response = await octokit.rest.issues.listComments({
       owner: repository.owner.login,
       repo: repository.name,
@@ -43,11 +62,27 @@ export async function annotate(context: Context<"issue_comment.created">, commen
       logger.error("No comments before the annotate command");
     }
   } else {
-    const { data } = await octokit.rest.issues.getComment({
-      owner: repository.owner.login,
-      repo: repository.name,
-      comment_id: parseInt(commentId, 10),
-    });
+    const commentOwner = commentTarget.owner ?? repository.owner.login;
+    const commentRepo = commentTarget.repo ?? repository.name;
+    const targetLabel = `${commentOwner}/${commentRepo}#issuecomment-${commentTarget.id}`;
+    if (!isTargetInScope(scope, repository.owner.login, commentOwner, repository.name, commentRepo)) {
+      throw logger.error(
+        `Cannot annotate ${targetLabel} with '${scope}' scope from ${repository.owner.login}/${repository.name}. Use a matching scope or 'global' for comments outside this repository or organization.`
+      );
+    }
+    let data;
+    try {
+      ({ data } = await octokit.rest.issues.getComment({
+        owner: commentOwner,
+        repo: commentRepo,
+        comment_id: parseInt(commentTarget.id, 10),
+      }));
+    } catch (error) {
+      throw logger.error(
+        `Cannot access ${targetLabel}. The comment may be outside the current organization/repository, or the GitHub installation does not have permission to read it.`,
+        { error: error instanceof Error ? error : { stack: String(error) } }
+      );
+    }
     await commentChecker(context, data, scope);
   }
 }
@@ -120,16 +155,7 @@ export async function commentChecker(context: Context<"issue_comment.created">, 
 }
 
 function filterByScope(scope: string, repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
-  switch (scope) {
-    case "global":
-      return true;
-    case "org":
-      return repoOrg === similarIssueRepoOrg;
-    case "repo":
-      return repoOrg === similarIssueRepoOrg && repoName === similarIssueRepoName;
-    default:
-      return false;
-  }
+  return isTargetInScope(scope, repoOrg, similarIssueRepoOrg, repoName, similarIssueRepoName);
 }
 
 async function handleSimilarIssuesAndComments(

@@ -6,6 +6,7 @@ import { Logs } from "@ubiquity-os/ubiquity-os-logger";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, mock, spyOn } from "bun:test";
 import dotenv from "dotenv";
 import { IssueSimilaritySearchResult } from "../src/adapters/supabase/helpers/issues";
+import { parseAnnotateCommentTarget } from "../src/handlers/user-annotate";
 import { Context } from "../src/types/context";
 import { Env } from "../src/types/index";
 import { CommentMock, createMockAdapters, IssueMock } from "./__mocks__/adapter";
@@ -183,7 +184,7 @@ describe("Plugin tests", () => {
         // Find the most similar sentence (first sentence in this case)
         const updatedBody =
           warningThresholdIssue2.issue_body.replace(STRINGS.SIMILAR_ISSUE_TITLE, `${STRINGS.SIMILAR_ISSUE_TITLE}[^01^]`) +
-          `\n\n[^01^]: ⚠ 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n\n`;
+          `\n\n[^01^]: ? 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n\n`;
 
         db.issue.update({
           where: {
@@ -199,7 +200,7 @@ describe("Plugin tests", () => {
 
       const issue = db.issue.findFirst({ where: { node_id: { equals: "warning2" } } }) as unknown as Context["payload"]["issue"];
       expect(issue.state).toBe("open");
-      expect(issue.body).toContain(`[^01^]: ⚠ 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
+      expect(issue.body).toContain(`[^01^]: ? 80% possible duplicate - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
     }
   );
 
@@ -638,6 +639,41 @@ describe("Plugin tests", () => {
 
     const updatedComment = db.issueComments.findFirst({ where: { id: { equals: 1 } } }) as unknown as Context<"issue_comment.created">["payload"]["comment"];
     expect(updatedComment.body).not.toContain(`[^01^]: 88% similar to issue: [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
+  });
+
+  it("When annotate targets a comment outside the selected organization scope, it should explain the scope mismatch", async () => {
+    const { context, errorSpy } = createContext(
+      "/annotate https://github.com/other-org/other-repo/issues/5#issuecomment-123 org",
+      1,
+      1,
+      2,
+      "createAnnotate",
+      DEFAULT_ISSUE_ID
+    );
+    context.octokit.rest.issues.getComment = mock(async () => {
+      throw new Error("getComment should not be called for an out-of-scope URL");
+    }) as unknown as typeof octokit.rest.issues.getComment;
+
+    let thrown: unknown;
+    try {
+      await runPlugin(context);
+    } catch (error) {
+      thrown = error;
+    }
+
+    const hasScopeError = errorSpy.mock.calls.some((call) => String(call[0]).includes("Cannot annotate other-org/other-repo#issuecomment-123"));
+    expect(thrown).toBeDefined();
+    expect(hasScopeError).toBe(true);
+    expect(context.octokit.rest.issues.getComment).not.toHaveBeenCalled();
+  });
+
+  it("parses full and relative annotate comment URLs", () => {
+    expect(parseAnnotateCommentTarget("https://github.com/owner-name/repo-name/issues/42#issuecomment-987?notification_referrer_id=abc")).toEqual({
+      id: "987",
+      owner: "owner-name",
+      repo: "repo-name",
+    });
+    expect(parseAnnotateCommentTarget("/#issuecomment-321")).toEqual({ id: "321", owner: undefined, repo: undefined });
   });
 
   function createContext(

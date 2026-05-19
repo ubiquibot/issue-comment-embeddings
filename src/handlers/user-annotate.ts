@@ -1,9 +1,10 @@
 import { Context } from "../types/index";
-import { annotate } from "./annotate";
+import { AnnotateCommentTarget, annotate } from "./annotate";
 import { issueMatching, issueMatchingForUsers } from "./issue-matching";
 
 // GitHub usernames are 1-39 chars, alphanumeric or hyphen, no leading/trailing hyphen.
 const GITHUB_LOGIN_REGEX = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/;
+const INVALID_COMMENT_URL_MESSAGE = "Invalid comment URL";
 
 function normalizeUserLogins(segments: string[]): string[] {
   return segments
@@ -45,6 +46,21 @@ async function postCommandResponse(context: Context<"issue_comment.created">, bo
   await context.commentHandler.postComment(context, context.logger.info(body), options);
 }
 
+export function parseAnnotateCommentTarget(commentUrl: string): AnnotateCommentTarget {
+  const commentRegex =
+    /^(?:https?:\/\/(?:www\.)?github\.com\/(?<owner>[^/\s]+)\/(?<repo>[^/\s]+)\/(?:issues|pull)\/\d+)?\/?#issuecomment-(?<id>\d+)(?:\?.*)?$/;
+  const match = commentUrl.match(commentRegex);
+  const id = match?.groups?.id;
+  if (!id) {
+    throw new Error(INVALID_COMMENT_URL_MESSAGE);
+  }
+  return {
+    id,
+    owner: match.groups?.owner,
+    repo: match.groups?.repo,
+  };
+}
+
 export async function commandHandler(context: Context<"issue_comment.created">) {
   const { logger } = context;
 
@@ -55,16 +71,15 @@ export async function commandHandler(context: Context<"issue_comment.created">) 
   if (context.command.name === "annotate") {
     const commentUrl = context.command.parameters.commentUrl ?? null;
     const scope = context.command.parameters.scope ?? "org";
-    let commentId = null;
+    let commentTarget = null;
     if (commentUrl) {
-      const commentRegex = /#issuecomment-(\d+)$/;
-      const match = commentUrl.match(commentRegex);
-      if (!match) {
-        throw logger.error("Invalid comment URL");
+      try {
+        commentTarget = parseAnnotateCommentTarget(commentUrl);
+      } catch {
+        throw logger.error(INVALID_COMMENT_URL_MESSAGE);
       }
-      commentId = match[1];
     }
-    await annotate(context, commentId, scope);
+    await annotate(context, commentTarget, scope);
   }
 }
 
@@ -74,7 +89,7 @@ export async function userAnnotate(context: Context<"issue_comment.created">) {
   const splitComment = comment.body.trim().split(/\s+/);
   const commandName = splitComment[0].replace("/", "");
 
-  let commentId = null;
+  let commentTarget = null;
   let scope = "org";
 
   if (commandName === "annotate") {
@@ -87,17 +102,16 @@ export async function userAnnotate(context: Context<"issue_comment.created">) {
           throw logger.error("Invalid scope");
         }
 
-        const commentRegex = /#issuecomment-(\d+)$/;
-        const match = commentUrl.match(commentRegex);
-        if (!match) {
-          throw logger.error("Invalid comment URL");
+        try {
+          commentTarget = parseAnnotateCommentTarget(commentUrl);
+        } catch {
+          throw logger.error(INVALID_COMMENT_URL_MESSAGE);
         }
-        commentId = match[1];
       } else {
         throw logger.error("Invalid parameters");
       }
     }
-    await annotate(context, commentId, scope);
+    await annotate(context, commentTarget, scope);
   }
 
   if (commandName === "recommendation") {
