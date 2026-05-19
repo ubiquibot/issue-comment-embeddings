@@ -5,6 +5,10 @@ import { CommentSimilaritySearchResult } from "../adapters/supabase/helpers/comm
 import { stripHtmlComments } from "../utils/markdown-comments";
 import { appendFootnoteRefsToFirstLine, insertFootnoteRefNearSentence } from "../utils/footnote-placement";
 
+const ANNOTATE_ISSUE_FOOTNOTE_PREFIX = "annotate-issue";
+const ANNOTATE_COMMENT_FOOTNOTE_PREFIX = "annotate-comment";
+const ANNOTATE_FOOTNOTE_DEF_REGEX = /\[\^((?:annotate-(?:issue|comment)-)?\d+)\^\]: \d+% similar to (issue|comment): [^\n]+(\n|$)/g;
+
 interface CommentGraphqlResponse {
   node: {
     body: string;
@@ -132,6 +136,10 @@ function filterByScope(scope: string, repoOrg: string, similarIssueRepoOrg: stri
   }
 }
 
+function createFootnoteRef(prefix: string, index: number): string {
+  return `[^${prefix}-${index}^]`;
+}
+
 async function handleSimilarIssuesAndComments(
   context: Context,
   payload: Context["payload"],
@@ -144,7 +152,7 @@ async function handleSimilarIssuesAndComments(
     return;
   }
   // Find existing footnotes in the body
-  const footnoteRegex = /\[\^(\d+)\^\]/g;
+  const footnoteRegex = /\[\^annotate-(?:issue|comment)-(\d+)\^\]/g;
   const existingFootnotes = commentBody.match(footnoteRegex) || [];
   let highestFootnoteIndex = existingFootnotes.length > 0 ? Math.max(...existingFootnotes.map((fn) => parseInt(fn.match(/\d+/)?.[0] ?? "0"))) : 0;
   let updatedBody = commentBody;
@@ -154,7 +162,7 @@ async function handleSimilarIssuesAndComments(
   issueList.sort((a, b) => parseFloat(a.similarity) - parseFloat(b.similarity));
   issueList.forEach((issue, index) => {
     const footnoteIndex = highestFootnoteIndex + index + 1; // Continue numbering from the highest existing footnote number
-    const footnoteRef = `[^0${footnoteIndex}^]`;
+    const footnoteRef = createFootnoteRef(ANNOTATE_ISSUE_FOOTNOTE_PREFIX, footnoteIndex);
     const modifiedUrl = issue.node.url.replace("https://github.com", "https://www.github.com");
     const { sentence } = issue.mostSimilarSentence;
     // Insert footnote reference in the body
@@ -184,7 +192,7 @@ async function handleSimilarIssuesAndComments(
   commentList.sort((a, b) => parseFloat(a.similarity) - parseFloat(b.similarity));
   commentList.forEach((comment, index) => {
     const footnoteIndex = highestFootnoteIndex + index + 1; // Continue numbering from the highest existing footnote number
-    const footnoteRef = `[^0${footnoteIndex}^]`;
+    const footnoteRef = createFootnoteRef(ANNOTATE_COMMENT_FOOTNOTE_PREFIX, footnoteIndex);
     const modifiedUrl = comment.node.url.replace("https://github.com", "https://www.github.com");
     const { sentence } = comment.mostSimilarSentence;
     // Insert footnote reference in the body
@@ -277,8 +285,7 @@ async function processSimilarComments(
  * @returns True if a annotate footnote exists, false otherwise
  */
 export function checkIfAnnotateFootNoteExists(content: string): boolean {
-  const footnoteDefRegex = /\[\^(\d+)\^\]: \d+% similar to (issue|comment): [^\n]+(\n|$)/g;
-  const footnotes = content.match(footnoteDefRegex);
+  const footnotes = content.match(ANNOTATE_FOOTNOTE_DEF_REGEX);
   return !!footnotes;
 }
 
@@ -289,13 +296,15 @@ export function checkIfAnnotateFootNoteExists(content: string): boolean {
  * @returns The content without footnotes
  */
 export function removeAnnotateFootnotes(content: string): string {
-  const footnoteDefRegex = /\[\^(\d+)\^\]: \d+% similar to (issue|comment): [^\n]+(\n|$)/g;
-  const footnotes = content.match(footnoteDefRegex);
-  let contentWithoutFootnotes = content.replace(footnoteDefRegex, "");
+  const footnotes = content.match(ANNOTATE_FOOTNOTE_DEF_REGEX);
+  let contentWithoutFootnotes = content.replace(ANNOTATE_FOOTNOTE_DEF_REGEX, "");
   if (footnotes) {
     footnotes.forEach((footnote) => {
-      const footnoteNumber = footnote.match(/\d+/)?.[0];
-      contentWithoutFootnotes = contentWithoutFootnotes.replace(new RegExp(`\\[\\^${footnoteNumber}\\^\\]`, "g"), "");
+      const footnoteId = footnote.match(/\[\^([^\]]+)\^\]:/)?.[1];
+      if (!footnoteId) {
+        return;
+      }
+      contentWithoutFootnotes = contentWithoutFootnotes.replace(new RegExp(`\\[\\^${footnoteId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\^\\]`, "g"), "");
     });
   }
   return contentWithoutFootnotes;
