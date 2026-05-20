@@ -24,6 +24,7 @@ function createMockSupabase(selectBatches: QueueRow[][]) {
       return selectBuilder;
     },
     is: () => selectBuilder,
+    or: () => selectBuilder,
     not: () => selectBuilder,
     order: () => selectBuilder,
     limit: async () => ({

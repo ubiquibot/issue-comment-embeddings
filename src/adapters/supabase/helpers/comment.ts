@@ -4,6 +4,7 @@ import { Context } from "../../../types/context";
 import { COMMENT_DOCUMENT_TYPES, CommentDocumentType } from "../../../types/document";
 import { serializeEmbeddingForDatabase } from "../../../utils/database-embedding";
 import { cleanMarkdown, isTooShort, MIN_COMMENT_MARKDOWN_LENGTH } from "../../../utils/embedding-content";
+import { getEmbeddingModel, isNomicAvailable } from "../../../utils/embedding-model";
 import { isCommandLikeContent } from "../../../utils/markdown-comments";
 
 export interface CommentType {
@@ -14,6 +15,7 @@ export interface CommentType {
   created_at: string;
   modified_at: string;
   embedding: number[] | null;
+  nomic_embedding: number[] | null;
   deleted_at?: string | null;
 }
 
@@ -40,6 +42,23 @@ interface FindSimilarCommentsParams {
   markdown: string;
   currentId: string;
   threshold: number;
+}
+
+async function createNomicEmbeddingIfAvailable(context: Context, embeddingSource: string): Promise<{ attempted: boolean; embedding: number[] | null }> {
+  if (!isNomicAvailable(context)) {
+    return { attempted: false, embedding: null };
+  }
+  try {
+    return {
+      attempted: true,
+      embedding: await context.adapters.nomic.embedding.createEmbedding(embeddingSource),
+    };
+  } catch (error) {
+    context.logger.warn("Failed to create Nomic embedding for comment; continuing with Voyage embedding.", {
+      Error: error instanceof Error ? error : new Error(String(error)),
+    });
+    return { attempted: true, embedding: null };
+  }
 }
 
 export class Comment extends SuperSupabase {
@@ -77,8 +96,13 @@ export class Comment extends SuperSupabase {
     }
     //Create the embedding for this comment
     let embedding: number[] | null = null;
+    let nomicEmbedding: number[] | null = null;
+    let hasNomicAttempted = false;
     if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
       embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      const nomicResult = await createNomicEmbeddingIfAvailable(this.context, embeddingSource);
+      nomicEmbedding = nomicResult.embedding;
+      hasNomicAttempted = nomicResult.attempted;
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
@@ -87,17 +111,17 @@ export class Comment extends SuperSupabase {
       finalMarkdown = null;
       finalPayload = null;
     }
-    const { data, error } = await this.supabase.from("documents").insert([
-      {
-        id: commentData.id,
-        doc_type: docType,
-        parent_id: commentData.issue_id,
-        markdown: finalMarkdown,
-        author_id: commentData.author_id,
-        embedding: serializeEmbeddingForDatabase(embedding),
-        payload: finalPayload,
-      },
-    ]);
+    const insertData = {
+      id: commentData.id,
+      doc_type: docType,
+      parent_id: commentData.issue_id,
+      markdown: finalMarkdown,
+      author_id: commentData.author_id,
+      embedding: serializeEmbeddingForDatabase(embedding),
+      ...(hasNomicAttempted ? { nomic_embedding: serializeEmbeddingForDatabase(nomicEmbedding) } : {}),
+      payload: finalPayload,
+    };
+    const { data, error } = await this.supabase.from("documents").insert([insertData]);
     if (error) {
       this.context.logger.error("Failed to create comment in database", {
         Error: error,
@@ -119,8 +143,13 @@ export class Comment extends SuperSupabase {
     const embeddingSource = shouldSkipEmbedding ? null : cleanedMarkdown;
     //Create the embedding for this comment
     let embedding: number[] | null = null;
+    let nomicEmbedding: number[] | null = null;
+    let hasNomicAttempted = false;
     if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
-      embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
+      embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      const nomicResult = await createNomicEmbeddingIfAvailable(this.context, embeddingSource);
+      nomicEmbedding = nomicResult.embedding;
+      hasNomicAttempted = nomicResult.attempted;
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
@@ -134,18 +163,16 @@ export class Comment extends SuperSupabase {
       this.context.logger.debug("Comment does not exist, creating a new one");
       await this.createComment({ ...commentData, markdown: finalMarkdown, payload: finalPayload, isPrivate }, { deferEmbedding: shouldDeferEmbedding });
     } else {
-      const { error } = await this.supabase
-        .from("documents")
-        .update({
-          doc_type: docType,
-          parent_id: commentData.issue_id,
-          markdown: finalMarkdown,
-          embedding: serializeEmbeddingForDatabase(embedding),
-          payload: finalPayload,
-          modified_at: new Date(),
-        })
-        .eq("id", commentData.id)
-        .in("doc_type", COMMENT_DOCUMENT_TYPES);
+      const updateData = {
+        doc_type: docType,
+        parent_id: commentData.issue_id,
+        markdown: finalMarkdown,
+        embedding: serializeEmbeddingForDatabase(embedding),
+        ...(hasNomicAttempted ? { nomic_embedding: serializeEmbeddingForDatabase(nomicEmbedding) } : {}),
+        payload: finalPayload,
+        modified_at: new Date(),
+      };
+      const { error } = await this.supabase.from("documents").update(updateData).eq("id", commentData.id).in("doc_type", COMMENT_DOCUMENT_TYPES);
       if (error) {
         this.context.logger.error("Error updating comment", {
           Error: error,
@@ -153,6 +180,7 @@ export class Comment extends SuperSupabase {
             commentData,
             markdown: finalMarkdown,
             embedding,
+            nomicEmbedding,
             payload: finalPayload,
             modified_at: new Date(),
           },
@@ -164,6 +192,7 @@ export class Comment extends SuperSupabase {
           commentData,
           markdown: finalMarkdown,
           embedding,
+          nomicEmbedding,
           payload: finalPayload,
           modified_at: new Date(),
         },
@@ -223,6 +252,25 @@ export class Comment extends SuperSupabase {
           minLength: MIN_COMMENT_MARKDOWN_LENGTH,
         });
         return null;
+      }
+      if (getEmbeddingModel(this.context) === "nomic" && isNomicAvailable(this.context)) {
+        const embedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource, "query");
+        const { data, error } = await this.supabase.rpc("find_similar_comments_annotate_nomic", {
+          query_embedding: embedding,
+          current_id: currentId,
+          threshold,
+          top_k: 5,
+        });
+        if (error) {
+          this.context.logger.error("Unable to find similar comments with Nomic embeddings", {
+            Error: error,
+            markdown,
+            currentId,
+            threshold,
+          });
+          return null;
+        }
+        return data;
       }
       const embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
       const { data, error } = await this.supabase.rpc("find_similar_comments_annotate", {

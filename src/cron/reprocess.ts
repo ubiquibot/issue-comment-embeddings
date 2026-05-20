@@ -6,6 +6,8 @@ import { LOG_LEVEL, LogLevel, Logs } from "@ubiquity-os/ubiquity-os-logger";
 import { VoyageAIClient } from "voyageai";
 import { IssueStore, TrackedRepository } from "../adapters/postgres-issue-store";
 import { LlmAdapter } from "../adapters/llm";
+import { Embedding as NomicEmbedding } from "../adapters/nomic/helpers/embedding";
+import { SuperNomic } from "../adapters/nomic/helpers/nomic";
 import { Comment } from "../adapters/supabase/helpers/comment";
 import { Issue } from "../adapters/supabase/helpers/issues";
 import { SuperSupabase } from "../adapters/supabase/helpers/supabase";
@@ -114,6 +116,10 @@ export function createReprocessAdapters(context: Context, clients: ReprocessClie
     voyage: {
       embedding: new VoyageEmbedding(clients.voyage, context),
       super: new SuperVoyage(clients.voyage, context),
+    },
+    nomic: {
+      embedding: new NomicEmbedding(context),
+      super: new SuperNomic(context),
     },
     issueStore,
     llm: new LlmAdapter(context),

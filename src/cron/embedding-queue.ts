@@ -1,5 +1,6 @@
 import { SupabaseClient } from "@supabase/supabase-js";
 import { VoyageAIClient } from "voyageai";
+import { Embedding as NomicEmbedding } from "../adapters/nomic/helpers/embedding";
 import { Embedding as VoyageEmbedding } from "../adapters/voyage/helpers/embedding";
 import { DocumentType } from "../types/document";
 import { Context } from "../types/context";
@@ -36,6 +37,8 @@ type PendingRow = {
   modified_at: string | null;
   payload: unknown;
   doc_type: DocumentType;
+  embedding: string | null;
+  nomic_embedding: string | null;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -140,11 +143,12 @@ function getAuthorType(payload: unknown, docType: DocumentType): string | null {
 }
 
 async function createEmbeddingsWithRetry(
-  embedder: VoyageEmbedding,
+  embedder: { createEmbeddings(texts: string[]): Promise<number[][]> },
   texts: string[],
   maxRetries: number,
   delayMs: number,
-  logger: QueueLogger
+  logger: QueueLogger,
+  providerName: string
 ): Promise<number[][] | null> {
   let attempt = 0;
   while (attempt <= maxRetries) {
@@ -155,7 +159,7 @@ async function createEmbeddingsWithRetry(
         throw error;
       }
       const backoffMs = getRateLimitDelayMs(delayMs, attempt, error);
-      logger.warn("Voyage rate limit hit while creating embeddings batch.", { attempt: attempt + 1, backoffMs });
+      logger.warn(`${providerName} rate limit hit while creating embeddings batch.`, { attempt: attempt + 1, backoffMs });
       if (attempt >= maxRetries) {
         return null;
       }
@@ -224,10 +228,11 @@ async function processPendingRows(params: {
   label: QueueLabel;
   supabase: SupabaseClient<Database>;
   embedder: VoyageEmbedding;
+  nomicEmbedder?: NomicEmbedding;
   settings: ReturnType<typeof getEmbeddingQueueSettings>;
   logger: QueueLogger;
 }): Promise<{ processed: number; stoppedEarly: boolean; processedByType: Record<DocumentType, number> }> {
-  const { docTypes, label, supabase, embedder, settings, logger } = params;
+  const { docTypes, label, supabase, embedder, nomicEmbedder, settings, logger } = params;
   const processedByType: Record<DocumentType, number> = {
     issue: 0,
     pull_request: 0,
@@ -235,15 +240,13 @@ async function processPendingRows(params: {
     review_comment: 0,
     pull_request_review: 0,
   };
-  const { data, error } = await supabase
+  let query = supabase
     .from("documents")
-    .select("id, markdown, modified_at, payload, doc_type")
+    .select("id, markdown, modified_at, payload, doc_type, embedding, nomic_embedding")
     .in("doc_type", docTypes)
-    .is("embedding", null)
-    .is("deleted_at", null)
-    .not("markdown", "is", null)
-    .order("modified_at", { ascending: true })
-    .limit(settings.batchSize);
+    .is("deleted_at", null);
+  query = nomicEmbedder ? query.or("embedding.is.null,nomic_embedding.is.null") : query.is("embedding", null);
+  const { data, error } = await query.not("markdown", "is", null).order("modified_at", { ascending: true }).limit(settings.batchSize);
 
   if (error) {
     logger.error("Failed to load pending embeddings.", { label, error });
@@ -268,23 +271,60 @@ async function processPendingRows(params: {
     return { processed: 0, stoppedEarly: false, processedByType };
   }
 
-  const embeddingSources = prepared.map((entry) => entry.embeddingSource);
-  const embeddings = await createEmbeddingsWithRetry(embedder, embeddingSources, settings.maxRetries, settings.delayMs, logger);
-  if (!embeddings) {
+  const voyageEntries = prepared.filter((entry) => !entry.row.embedding);
+  const nomicEntries = nomicEmbedder ? prepared.filter((entry) => !entry.row.nomic_embedding) : [];
+  const voyageEmbeddings = voyageEntries.length
+    ? await createEmbeddingsWithRetry(
+        embedder,
+        voyageEntries.map((entry) => entry.embeddingSource),
+        settings.maxRetries,
+        settings.delayMs,
+        logger,
+        "Voyage"
+      )
+    : [];
+  if (!voyageEmbeddings) {
     return { processed: 0, stoppedEarly: true, processedByType };
   }
-  if (embeddings.length !== prepared.length) {
+  if (voyageEmbeddings.length !== voyageEntries.length) {
     logger.error("Embedding batch response size mismatch.", {
       label,
-      expected: prepared.length,
-      received: embeddings.length,
+      provider: "Voyage",
+      expected: voyageEntries.length,
+      received: voyageEmbeddings.length,
+    });
+    return { processed: 0, stoppedEarly: true, processedByType };
+  }
+  const nomicEmbeddings =
+    nomicEmbedder && nomicEntries.length
+      ? await createEmbeddingsWithRetry(
+          nomicEmbedder,
+          nomicEntries.map((entry) => entry.embeddingSource),
+          settings.maxRetries,
+          settings.delayMs,
+          logger,
+          "Nomic"
+        )
+      : [];
+  if (!nomicEmbeddings) {
+    return { processed: 0, stoppedEarly: true, processedByType };
+  }
+  if (nomicEmbeddings.length !== nomicEntries.length) {
+    logger.error("Embedding batch response size mismatch.", {
+      label,
+      provider: "Nomic",
+      expected: nomicEntries.length,
+      received: nomicEmbeddings.length,
     });
     return { processed: 0, stoppedEarly: true, processedByType };
   }
 
-  const updates = prepared.map((entry, index) => ({
+  const voyageById = new Map(voyageEntries.map((entry, index) => [entry.row.id, voyageEmbeddings[index] ?? []]));
+  const nomicById = new Map(nomicEntries.map((entry, index) => [entry.row.id, nomicEmbeddings[index] ?? []]));
+  const updates = prepared.map((entry) => ({
     row: entry.row,
-    embedding: embeddings[index] ?? [],
+    embedding: voyageById.get(entry.row.id),
+    nomicEmbedding: nomicById.get(entry.row.id),
   }));
 
   let processed = 0;
@@ -296,7 +336,7 @@ async function processPendingRows(params: {
       if (!update) {
         return;
       }
-      if (!update.embedding.length) {
+      if (update.embedding && !update.embedding.length) {
         logger.error("Embedding batch returned empty vector.", { label, id: update.row.id });
         const { error: clearError } = await supabase
           .from("documents")
@@ -311,10 +351,16 @@ async function processPendingRows(params: {
         }
         continue;
       }
-      const { error: updateError } = await supabase
-        .from("documents")
-        .update({ embedding: serializeEmbeddingForDatabase(update.embedding), modified_at: new Date().toISOString() })
-        .eq("id", update.row.id);
+      if (update.nomicEmbedding && !update.nomicEmbedding.length) {
+        logger.error("Nomic embedding batch returned empty vector.", { label, id: update.row.id });
+        continue;
+      }
+      const updateValues = {
+        ...(update.embedding ? { embedding: serializeEmbeddingForDatabase(update.embedding) } : {}),
+        ...(update.nomicEmbedding ? { nomic_embedding: serializeEmbeddingForDatabase(update.nomicEmbedding) } : {}),
+        modified_at: new Date().toISOString(),
+      };
+      const { error: updateError } = await supabase.from("documents").update(updateValues).eq("id", update.row.id);
 
       if (updateError) {
         logger.error("Failed to update embedding.", { label, id: update.row.id, updateError });
@@ -347,12 +393,14 @@ export async function processPendingEmbeddings(params: { env: Env; clients: Queu
   }
 
   const embedder = new VoyageEmbedding(clients.voyage, { logger } as unknown as Context);
+  const nomicEmbedder = env.NOMIC_API_KEY ? new NomicEmbedding({ env, logger } as unknown as Context) : undefined;
 
   const combinedResult = await processPendingRows({
     docTypes: ["issue", "pull_request", "issue_comment", "review_comment", "pull_request_review"],
     label: "documents",
     supabase: clients.supabase,
     embedder,
+    nomicEmbedder,
     settings,
     logger,
   });

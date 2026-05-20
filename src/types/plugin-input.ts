@@ -16,6 +16,12 @@ export const pluginSettingsSchema = T.Object(
       description: "The minimum similarity score for including similar issues as annotations in the comment footnotes.",
     }),
     jobMatchingThreshold: T.Number({ default: 0.75, description: "The minimum similarity score when considering users to be suitable for a job." }),
+    embeddingModel: T.Optional(
+      T.Union([T.Literal("voyage"), T.Literal("nomic")], {
+        default: "voyage",
+        description: "Embedding model used for similarity search. Voyage remains the default; Nomic requires NOMIC_API_KEY and a separate 768d index.",
+      })
+    ),
     alwaysRecommend: T.Optional(
       T.Number({ default: 0, description: "If set to a value greater than 0, the bot will always recommend contributors, regardless of the similarity score." })
     ),

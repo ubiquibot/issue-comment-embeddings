@@ -21,6 +21,7 @@ export type Database = {
           id: string;
           markdown: string | null;
           modified_at: string;
+          nomic_embedding: string | null;
           parent_id: string | null;
           payload: Json | null;
         };
@@ -36,6 +37,7 @@ export type Database = {
           id: string;
           markdown?: string | null;
           modified_at?: string;
+          nomic_embedding?: string | null;
           parent_id?: string | null;
           payload?: Json | null;
         };
@@ -51,6 +53,7 @@ export type Database = {
           id?: string;
           markdown?: string | null;
           modified_at?: string;
+          nomic_embedding?: string | null;
           parent_id?: string | null;
           payload?: Json | null;
         };
@@ -473,6 +476,18 @@ export type Database = {
           similarity: number;
         }[];
       };
+      find_similar_comments_annotate_nomic: {
+        Args: {
+          current_id: string;
+          query_embedding: string;
+          threshold: number;
+          top_k: number;
+        };
+        Returns: {
+          comment_id: string;
+          similarity: number;
+        }[];
+      };
       find_similar_issues: {
         Args: {
           current_id: string;
@@ -497,7 +512,31 @@ export type Database = {
           similarity: number;
         }[];
       };
+      find_similar_issues_annotate_nomic: {
+        Args: {
+          current_id: string;
+          query_embedding: string;
+          threshold: number;
+          top_k: number;
+        };
+        Returns: {
+          issue_id: string;
+          similarity: number;
+        }[];
+      };
       find_similar_issues_to_match: {
+        Args: {
+          current_id: string;
+          query_embedding: string;
+          threshold: number;
+          top_k: number;
+        };
+        Returns: {
+          issue_id: string;
+          similarity: number;
+        }[];
+      };
+      find_similar_issues_to_match_nomic: {
         Args: {
           current_id: string;
           query_embedding: string;
