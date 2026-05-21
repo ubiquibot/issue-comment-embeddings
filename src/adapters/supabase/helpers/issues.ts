@@ -90,13 +90,13 @@ export class Issue extends SuperSupabase {
 
     //Create the embedding for this issue
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !(isPrivate && this.context.config.redactPrivateRepoComments)) {
       embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
     }
     let finalMarkdown = isShortIssue ? null : issueData.markdown;
     let finalPayload = issueData.payload;
 
-    if (isPrivate) {
+    if (isPrivate && this.context.config.redactPrivateRepoComments) {
       finalMarkdown = null;
       finalPayload = null;
     }
@@ -131,13 +131,13 @@ export class Issue extends SuperSupabase {
     const embeddingSource = !isShortIssue ? cleanedMarkdown : null;
     //Create the embedding for this issue
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !(isPrivate && this.context.config.redactPrivateRepoComments)) {
       embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
     }
     let finalMarkdown = isShortIssue ? null : issueData.markdown;
     let finalPayload = issueData.payload;
 
-    if (isPrivate) {
+    if (isPrivate && this.context.config.redactPrivateRepoComments) {
       finalMarkdown = null;
       finalPayload = null;
     }

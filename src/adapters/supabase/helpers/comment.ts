@@ -77,13 +77,13 @@ export class Comment extends SuperSupabase {
     }
     //Create the embedding for this comment
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !(isPrivate && this.context.config.redactPrivateRepoComments)) {
       embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (isPrivate && this.context.config.redactPrivateRepoComments) {
       finalMarkdown = null;
       finalPayload = null;
     }
@@ -119,13 +119,13 @@ export class Comment extends SuperSupabase {
     const embeddingSource = shouldSkipEmbedding ? null : cleanedMarkdown;
     //Create the embedding for this comment
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !(isPrivate && this.context.config.redactPrivateRepoComments)) {
       embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (isPrivate && this.context.config.redactPrivateRepoComments) {
       finalMarkdown = null;
       finalPayload = null;
     }
