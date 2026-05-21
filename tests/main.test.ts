@@ -528,6 +528,39 @@ describe("Plugin tests", () => {
     expect(updatedComment.body).toContain(`[^01^]: 88% similar to issue: [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
   });
 
+  it("When a user uses default annotate command and no matches are found, it should post a no-match comment", async () => {
+    const [annotateIssue] = fetchSimilarIssues("annotate");
+    const { context } = createContextIssues(annotateIssue.issue_body, "annotate", 9, annotateIssue.title);
+    context.adapters.supabase.issue.findSimilarIssues = mock().mockResolvedValue([]);
+    context.adapters.supabase.comment.findSimilarComments = mock().mockResolvedValue([]);
+    context.adapters.supabase.issue.createIssue = mock(async () => {
+      createIssue(annotateIssue.issue_body, "annotate", annotateIssue.title, 9, { login: "test", id: 1 }, "open", null, STRINGS.TEST_REPO, STRINGS.USER_1);
+    });
+
+    await runPlugin(context);
+
+    createComment(annotateComment.body, annotateComment.id, "annotate", 9);
+
+    const { context: context2, comment } = createContext("/annotate", 1, 1, 2, "createAnnotate", "annotate");
+
+    context2.adapters.supabase.issue.findSimilarIssues = mock().mockResolvedValue([]);
+    context2.adapters.supabase.comment.findSimilarComments = mock().mockResolvedValue([]);
+
+    context2.octokit.rest.issues.listComments = mock(async () => {
+      return { data: [annotateComment, comment] };
+    }) as unknown as typeof octokit.rest.issues.listComments;
+
+    context2.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      createComment(params.body, 3, "annotate", params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
+    await runPlugin(context2);
+
+    const noMatchComment = db.issueComments.findFirst({ where: { id: { equals: 3 } } }) as unknown as Context<"issue_comment.created">["payload"]["comment"];
+    expect(noMatchComment.body).toContain("Annotation completed successfully");
+    expect(noMatchComment.body).toContain("no similar issues or comments were found");
+  });
+
   it("When demoFlag is true, it should skip storing issues in the database", async () => {
     const { context } = createContextIssues(DEFAULT_BODY, "demoIssue", 10, "Demo Test Issue");
 
@@ -633,6 +666,10 @@ describe("Plugin tests", () => {
         },
       });
     }) as unknown as typeof octokit.rest.issues.updateComment;
+
+    context2.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      createComment(params.body, 3, "annotate", params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
 
     await runPlugin(context2);
 

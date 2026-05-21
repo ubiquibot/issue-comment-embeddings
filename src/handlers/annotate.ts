@@ -5,6 +5,8 @@ import { CommentSimilaritySearchResult } from "../adapters/supabase/helpers/comm
 import { stripHtmlComments } from "../utils/markdown-comments";
 import { appendFootnoteRefsToFirstLine, insertFootnoteRefNearSentence } from "../utils/footnote-placement";
 
+const NO_ANNOTATE_MATCHES_COMMENT = "> [!NOTE]\n> Annotation completed successfully, but no similar issues or comments were found.";
+
 interface CommentGraphqlResponse {
   node: {
     body: string;
@@ -133,14 +135,20 @@ function filterByScope(scope: string, repoOrg: string, similarIssueRepoOrg: stri
 }
 
 async function handleSimilarIssuesAndComments(
-  context: Context,
-  payload: Context["payload"],
+  context: Context<"issue_comment.created">,
+  payload: Context<"issue_comment.created">["payload"],
   commentBody: string,
   commentId: number,
   issueList: IssueGraphqlResponse[],
   commentList: CommentGraphqlResponse[]
 ) {
   if (!issueList.length && !commentList.length) {
+    await context.octokit.rest.issues.createComment({
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      issue_number: payload.issue.number,
+      body: NO_ANNOTATE_MATCHES_COMMENT,
+    });
     return;
   }
   // Find existing footnotes in the body
