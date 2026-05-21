@@ -74,6 +74,8 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     const matchIssues = processedIssues.filter((issue) => parseFloat(issue.similarity) / 100 >= context.config.dedupeMatchThreshold);
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.dedupeMatchThreshold} already exists`, { matchIssues });
+      // Create a formal "Duplicate of #<number>" marker comment for GitHub's duplicate detection
+      await createDuplicateMarkerComment(context, payload, matchIssues);
       //To the issue body, add a footnote with the link to the similar issue
       const updatedBody = await handleMatchIssuesComment(context, payload, cleanedIssueBody, processedIssues);
       const outputBody = updatedBody || cleanedIssueBody;
@@ -90,7 +92,7 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
         issue_number: originalIssue.number,
         body: nextBody,
         state: "closed",
-        state_reason: "not_planned",
+        state_reason: "duplicate",
       });
       return;
     }
@@ -248,6 +250,33 @@ async function handleSimilarIssuesComment(
     repo: payload.repository.name,
     issue_number: issueNumber,
     body: outputBody,
+  });
+}
+
+/**
+ * Creates a formal GitHub "Duplicate of #<number>" marker comment on the issue being closed as a duplicate.
+ * This leverages GitHub's native duplicate detection UI which creates a timeline event linking the duplicates.
+ * @param context The context object
+ * @param payload The event payload
+ * @param matchIssues The list of matching issues (similarity above match threshold)
+ */
+async function createDuplicateMarkerComment(
+  context: Context,
+  payload: Context<"issues.opened" | "issues.edited">["payload"],
+  matchIssues: IssueGraphqlResponse[]
+): Promise<void> {
+  // Sort by similarity descending to pick the most similar issue as the duplicate target
+  const sortedIssues = [...matchIssues].sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity));
+  const duplicateIssue = sortedIssues[0];
+  if (!duplicateIssue) {
+    return;
+  }
+  const { octokit } = context;
+  await octokit.rest.issues.createComment({
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: payload.issue.number,
+    body: `Duplicate of #${duplicateIssue.node.number}`,
   });
 }
 
