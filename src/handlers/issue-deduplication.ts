@@ -10,6 +10,7 @@ import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
   node: {
+    id: string;
     title: string;
     number: number;
     url: string;
@@ -75,23 +76,27 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.dedupeMatchThreshold} already exists`, { matchIssues });
       //To the issue body, add a footnote with the link to the similar issue
+      const bestMatchIssue = getBestMatchIssue(matchIssues);
       const updatedBody = await handleMatchIssuesComment(context, payload, cleanedIssueBody, processedIssues);
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "duplicate";
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
       }
-      await octokit.rest.issues.update({
-        owner: payload.repository.owner.login,
-        repo: payload.repository.name,
-        issue_number: originalIssue.number,
-        body: nextBody,
-        state: "closed",
-        state_reason: "not_planned",
-      });
+      if (!isBodyUnchanged) {
+        await octokit.rest.issues.update({
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          issue_number: originalIssue.number,
+          body: nextBody,
+        });
+      }
+      if (shouldClose) {
+        await closeIssueAsDuplicate(context, originalIssue.node_id, bestMatchIssue.node.id);
+      }
       return;
     }
     if (processedIssues.length > 0) {
@@ -121,6 +126,27 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
 
 function matchRepoOrgToSimilarIssueRepoOrg(repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
   return repoOrg === similarIssueRepoOrg && repoName === similarIssueRepoName;
+}
+
+function getBestMatchIssue(matchIssues: IssueGraphqlResponse[]): IssueGraphqlResponse {
+  return [...matchIssues].sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity))[0];
+}
+
+async function closeIssueAsDuplicate(context: Context, issueId: string, duplicateIssueId: string) {
+  await context.octokit.graphql(
+    /* GraphQL */
+    `
+      mutation CloseDuplicateIssue($issueId: ID!, $duplicateIssueId: ID!) {
+        closeIssue(input: { issueId: $issueId, stateReason: DUPLICATE, duplicateIssueId: $duplicateIssueId }) {
+          issue {
+            id
+            state
+          }
+        }
+      }
+    `,
+    { issueId, duplicateIssueId }
+  );
 }
 
 function splitIntoSentences(text: string): string[] {
@@ -290,6 +316,7 @@ export async function processSimilarIssues(similarIssues: IssueSimilaritySearchR
             query ($issueNodeId: ID!) {
               node(id: $issueNodeId) {
                 ... on Issue {
+                  id
                   title
                   url
                   number
