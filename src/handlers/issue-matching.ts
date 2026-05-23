@@ -139,7 +139,7 @@ async function syncIssueMatchingComment(
   }
 
   if (keepCommentId) {
-    await cleanupIssueMatchingComments(context, keepCommentId, existingComments);
+    await cleanupIssueMatchingComments(context, keepCommentId);
   }
 }
 
@@ -163,18 +163,16 @@ function commentBuilder(matchResultArray: Map<string, Array<string>>): string {
   return commentLines.join("\n");
 }
 
-async function cleanupIssueMatchingComments(
-  context: Context<"issues.opened" | "issues.edited" | "issues.labeled">,
-  keepCommentId: number,
-  knownComments: IssueCommentSummary[]
-) {
+async function cleanupIssueMatchingComments(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">, keepCommentId: number) {
   const {
     octokit,
     payload: { repository },
   } = context;
   const latestComments = await fetchIssueMatchingComments(context);
-  const commentsById = new Map([...knownComments, ...latestComments].map((comment) => [comment.id, comment]));
-  const duplicateComments = Array.from(commentsById.values()).filter((comment) => comment.id !== keepCommentId);
+  if (latestComments.length <= 1) return;
+
+  const effectiveKeepId = latestComments.some((comment) => comment.id === keepCommentId) ? keepCommentId : latestComments[0].id;
+  const duplicateComments = latestComments.filter((comment) => comment.id !== effectiveKeepId);
   for (const duplicate of duplicateComments) {
     await octokit.rest.issues.deleteComment({
       owner: repository.owner.login,
