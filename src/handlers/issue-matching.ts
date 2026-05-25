@@ -31,8 +31,51 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+type RepositoryContext = {
+  owner?: string | null;
+  repo?: string | null;
+};
+
+export type RepositoryContextScope = "repo" | "org" | "global";
+
+const CONTEXT_SIMILARITY_PENALTY: Record<RepositoryContextScope, number> = {
+  repo: 0,
+  org: 0.25,
+  global: 0.5,
+};
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
+}
+
+function normalizeContextValue(value?: string | null) {
+  return value?.trim().toLowerCase() || null;
+}
+
+export function getRepositoryContextScope(current: RepositoryContext, candidate: RepositoryContext): RepositoryContextScope {
+  const currentOwner = normalizeContextValue(current.owner);
+  const currentRepo = normalizeContextValue(current.repo);
+  const candidateOwner = normalizeContextValue(candidate.owner);
+  const candidateRepo = normalizeContextValue(candidate.repo);
+
+  if (currentOwner && currentRepo && candidateOwner && candidateRepo && currentOwner === candidateOwner && currentRepo === candidateRepo) {
+    return "repo";
+  }
+
+  if (currentOwner && candidateOwner && currentOwner === candidateOwner) {
+    return "org";
+  }
+
+  return "global";
+}
+
+export function applyRepositoryContextPenalty(similarity: number, current: RepositoryContext, candidate: RepositoryContext) {
+  const boundedSimilarity = Math.min(1, Math.max(0, similarity));
+  const scope = getRepositoryContextScope(current, candidate);
+  return {
+    scope,
+    similarity: Math.max(0, boundedSimilarity - CONTEXT_SIMILARITY_PENALTY[scope]),
+  };
 }
 
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
@@ -144,6 +187,10 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     return null;
   }
   const issueContent = issue.body + issue.title;
+  const currentRepositoryContext = {
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+  };
   const matchResultArray: Map<string, Array<string>> = new Map();
 
   // If alwaysRecommend is enabled, use a lower threshold to ensure we get enough recommendations
@@ -154,7 +201,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     markdown: issueContent,
     threshold: threshold,
     currentId: issue.node_id,
-    topK: options.topK,
+    topK: options.topK ?? 50,
   });
 
   if (similarIssues && similarIssues.length > 0) {
@@ -212,14 +259,18 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
       const hasAssignees = issue.node.assignees.nodes.length > 0;
       const isCompletedWithAssignees = issue.node.closed && issue.node.stateReason === "COMPLETED" && hasAssignees;
       const isEligible = options.includeNonCompleted ? hasAssignees : isCompletedWithAssignees;
+      const { similarity: contextAdjustedSimilarity } = applyRepositoryContextPenalty(issue.similarity, currentRepositoryContext, {
+        owner: issue.node.repository.owner.login,
+        repo: issue.node.repository.name,
+      });
 
-      if (isEligible) {
+      if (isEligible && contextAdjustedSimilarity >= threshold) {
         const assignees = issue.node.assignees.nodes;
         assignees.forEach((assignee: { login: string; url: string }) => {
           if (options.allowedLogins && !options.allowedLogins.has(assignee.login)) {
             return;
           }
-          const similarityPercentage = Math.round(issue.similarity * 100);
+          const similarityPercentage = Math.round(contextAdjustedSimilarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
