@@ -10,6 +10,7 @@ import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
   node: {
+    id: string;
     title: string;
     number: number;
     url: string;
@@ -79,19 +80,22 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "duplicate";
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
       }
-      await octokit.rest.issues.update({
-        owner: payload.repository.owner.login,
-        repo: payload.repository.name,
-        issue_number: originalIssue.number,
-        body: nextBody,
-        state: "closed",
-        state_reason: "not_planned",
-      });
+      if (!isBodyUnchanged) {
+        await octokit.rest.issues.update({
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          issue_number: originalIssue.number,
+          body: nextBody,
+        });
+      }
+      if (shouldClose) {
+        await closeIssueAsDuplicate(context, originalIssue.node_id, getMostSimilarIssue(matchIssues).node.id);
+      }
       return;
     }
     if (processedIssues.length > 0) {
@@ -121,6 +125,32 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
 
 function matchRepoOrgToSimilarIssueRepoOrg(repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
   return repoOrg === similarIssueRepoOrg && repoName === similarIssueRepoName;
+}
+
+function getMostSimilarIssue(issues: IssueGraphqlResponse[]): IssueGraphqlResponse {
+  return issues.reduce((best, issue) => (parseFloat(issue.similarity) > parseFloat(best.similarity) ? issue : best));
+}
+
+async function closeIssueAsDuplicate(context: Context, issueId: string, duplicateIssueId: string) {
+  await context.octokit.graphql(
+    /* GraphQL */
+    `
+      mutation CloseIssueAsDuplicate($input: CloseIssueInput!) {
+        closeIssue(input: $input) {
+          issue {
+            id
+          }
+        }
+      }
+    `,
+    {
+      input: {
+        issueId,
+        stateReason: "DUPLICATE",
+        duplicateIssueId,
+      },
+    }
+  );
 }
 
 function splitIntoSentences(text: string): string[] {
@@ -290,6 +320,7 @@ export async function processSimilarIssues(similarIssues: IssueSimilaritySearchR
             query ($issueNodeId: ID!) {
               node(id: $issueNodeId) {
                 ... on Issue {
+                  id
                   title
                   url
                   number
