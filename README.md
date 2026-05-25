@@ -12,7 +12,7 @@ This is a plugin for [UbiquityOS](https://github.com/ubiquity-os/ubiquity-os-ker
 - `DATABASE_URL`: Temporary Postgres store for tracked issues and shared rate limiting. This is required for webhook runs, cron, `/recommendations`, and the Deno worker.
 - `EMBEDDINGS_QUEUE_ENABLED`: Enable deferred embedding processing via cron (default: true).
 - `EMBEDDINGS_QUEUE_BATCH_SIZE`: Max rows per cron batch (default: 50).
-- `EMBEDDINGS_QUEUE_DELAY_MS`: Delay between embeddings in milliseconds (default: 1000).
+- `EMBEDDINGS_QUEUE_DELAY_MS`: Delay between embeddings in milliseconds or an `ms` duration string such as `500ms` or `2s` (default: 1000).
 - `EMBEDDINGS_QUEUE_MAX_RETRIES`: Max retries on rate limits (default: 3).
 
 Cron GitHub App auth:

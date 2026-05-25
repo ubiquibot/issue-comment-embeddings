@@ -1,6 +1,10 @@
 import * as v from "valibot";
 
-export const urlSchema = v.pipe(v.string(), v.url(), v.regex(/https:\/\/github\.com\/[^/]+\/[^/]+\/(issues|pull)\/\d+$/));
+export const urlSchema = v.pipe(
+  v.string(),
+  v.url(),
+  v.regex(/^https?:\/\/(?:www\.)?github\.com\/[^/\s]+\/[^/\s]+\/(?:issues|pull)\/\d+\/?(?:[?#].*)?$/i)
+);
 
 export const querySchema = v.object({
   issueUrls: v.union([v.array(urlSchema), urlSchema]),

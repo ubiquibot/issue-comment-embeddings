@@ -233,19 +233,20 @@ export class Comment extends SuperSupabase {
       });
       if (error) {
         this.context.logger.error("Unable to find similar comments", {
-          Error: error,
-          markdown,
+          error,
+          markdownLength: markdown.length,
           currentId,
           threshold,
-          query_embedding: embedding,
+          embeddingSize: embedding.length,
         });
         return null;
       }
       return data;
     } catch (error) {
+      const normalizedError = error instanceof Error ? error : new Error(String(error));
       this.context.logger.error("Unable to find similar comments", {
-        Error: error,
-        markdown,
+        error: normalizedError,
+        markdownLength: markdown.length,
         currentId,
         threshold,
       });

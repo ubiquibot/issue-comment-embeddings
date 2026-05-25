@@ -5,7 +5,7 @@ import { IssueSimilaritySearchResult } from "../adapters/supabase/helpers/issues
 import { Context } from "../types/index";
 import { appendPluginUpdateComment, normalizeWhitespace, stripHtmlComments, stripPluginUpdateComments } from "../utils/markdown-comments";
 import { appendFootnoteRefsToFirstLine, insertFootnoteRefNearSentence } from "../utils/footnote-placement";
-import { stripDuplicateFootnotes } from "../utils/footnotes";
+import { createFootnoteRef, DEDUPLICATION_FOOTNOTE_PREFIX, getDuplicateFootnotes, getHighestFootnoteIndex, stripDuplicateFootnotes } from "../utils/footnotes";
 import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
@@ -193,10 +193,7 @@ async function handleSimilarIssuesComment(
   if (!issueBody) {
     return;
   }
-  // Find existing footnotes in the body
-  const footnoteRegex = /\[\^(\d+)\^\]/g;
-  const existingFootnotes = issueBody.match(footnoteRegex) || [];
-  const highestFootnoteIndex = existingFootnotes.length > 0 ? Math.max(...existingFootnotes.map((fn) => parseInt(fn.match(/\d+/)?.[0] ?? "0"))) : 0;
+  const highestFootnoteIndex = getHighestFootnoteIndex(issueBody, DEDUPLICATION_FOOTNOTE_PREFIX);
   let updatedBody = issueBody;
   const footnotes: string[] = [];
   const orphanRefs: string[] = [];
@@ -204,7 +201,7 @@ async function handleSimilarIssuesComment(
   relevantIssues.sort((a, b) => parseFloat(a.similarity) - parseFloat(b.similarity));
   relevantIssues.forEach((issue, index) => {
     const footnoteIndex = highestFootnoteIndex + index + 1; // Continue numbering from the highest existing footnote number
-    const footnoteRef = `[^0${footnoteIndex}^]`;
+    const footnoteRef = createFootnoteRef(DEDUPLICATION_FOOTNOTE_PREFIX, footnoteIndex);
     const modifiedUrl = issue.node.url.replace("https://github.com", "https://www.github.com");
     const { sentence } = issue.mostSimilarSentence;
     // Insert footnote reference in the body
@@ -344,9 +341,18 @@ async function handleAnchorAndImgElements(context: Context, content: string) {
   const anchors = htmlElement.getElementsByTagName("a");
   const images = htmlElement.getElementsByTagName("img");
 
+  function isLikelyImageUrl(url: string): boolean {
+    try {
+      return /\.(?:avif|gif|jpe?g|png|svg|webp)$/i.test(new URL(url).pathname);
+    } catch {
+      return false;
+    }
+  }
+
   async function processElement(element: HTMLAnchorElement | HTMLImageElement, isImage: boolean) {
     const url = isImage ? (element as HTMLImageElement).getAttribute("src") : (element as HTMLAnchorElement).getAttribute("href");
     if (!url) return;
+    if (!isImage && !isLikelyImageUrl(url)) return;
 
     try {
       const linkResponse = await fetch(url);
@@ -401,7 +407,5 @@ export async function cleanContent(context: Context, content: string): Promise<s
  * @returns True if a duplicate footnote exists, false otherwise
  */
 export function checkIfDuplicateFootNoteExists(content: string): boolean {
-  const footnoteDefRegex = /\[\^(\d+)\^\]: ⚠ \d+% possible duplicate - [^\n]+(\n|$)/g;
-  const footnotes = content.match(footnoteDefRegex);
-  return !!footnotes;
+  return !!getDuplicateFootnotes(content);
 }
