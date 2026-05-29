@@ -31,41 +31,35 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+const MATCHMAKING_COMMENT_START = ">The following contributors may be suitable for this task:";
+const MATCHMAKING_PLACEHOLDER = `>[!NOTE]\n${MATCHMAKING_COMMENT_START}\n> Calculating recommendations...`;
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
 }
 
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
-  const { logger, octokit, payload } = context;
-  const issue = payload.issue;
-  const commentStart = ">The following contributors may be suitable for this task:";
+  const { logger } = context;
+  let existingComment = await getExistingMatchmakingComment(context);
+  if (!existingComment && context.eventName === "issues.opened") {
+    existingComment = await createMatchmakingComment(context, MATCHMAKING_PLACEHOLDER);
+  }
 
   const result = await issueMatching(context);
 
   if (!result) {
+    if (existingComment) {
+      await deleteMatchmakingComment(context, existingComment.id);
+    }
     return;
   }
 
   const { matchResultArray, sortedContributors } = result;
 
-  // Fetch if any previous comment exists
-  const listIssues = (await octokit.paginate(octokit.rest.issues.listComments, {
-    owner: payload.repository.owner.login,
-    repo: payload.repository.name,
-    issue_number: issue.number,
-  })) as IssueCommentSummary[];
-
-  //Check if the comment already exists
-  const existingComment = listIssues.find((comment) => comment.body && comment.body.includes(">[!NOTE]" + "\n" + commentStart));
-
   if (matchResultArray.size === 0) {
     if (existingComment) {
       // If the comment already exists, delete it
-      await octokit.rest.issues.deleteComment({
-        owner: payload.repository.owner.login,
-        repo: payload.repository.name,
-        comment_id: existingComment.id,
-      });
+      await deleteMatchmakingComment(context, existingComment.id);
     }
     logger.debug("No suitable contributors found");
     return;
@@ -80,20 +74,69 @@ export async function issueMatchingWithComment(context: Context<"issues.opened" 
   logger.debug("Comment to be added", { comment });
 
   if (existingComment) {
-    await context.octokit.rest.issues.updateComment({
-      owner: payload.repository.owner.login,
-      repo: payload.repository.name,
-      comment_id: existingComment.id,
-      body: comment,
-    });
+    await updateMatchmakingComment(context, existingComment.id, comment);
+    await cleanupDuplicateMatchmakingComments(context, existingComment.id);
   } else {
-    await context.octokit.rest.issues.createComment({
-      owner: payload.repository.owner.login,
-      repo: payload.repository.name,
-      issue_number: payload.issue.number,
-      body: comment,
-    });
+    const createdComment = await createMatchmakingComment(context, comment);
+    await cleanupDuplicateMatchmakingComments(context, createdComment?.id);
   }
+}
+
+async function listMatchmakingComments(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">): Promise<IssueCommentSummary[]> {
+  const { octokit, payload } = context;
+  const comments = (await octokit.paginate(octokit.rest.issues.listComments, {
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: payload.issue.number,
+  })) as IssueCommentSummary[];
+  return comments.filter((comment) => comment.body?.includes(">[!NOTE]" + "\n" + MATCHMAKING_COMMENT_START));
+}
+
+async function getExistingMatchmakingComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">): Promise<IssueCommentSummary | undefined> {
+  const comments = await listMatchmakingComments(context);
+  return comments.sort((a, b) => a.id - b.id)[0];
+}
+
+async function createMatchmakingComment(
+  context: Context<"issues.opened" | "issues.edited" | "issues.labeled">,
+  body: string
+): Promise<IssueCommentSummary | undefined> {
+  const { payload } = context;
+  const response = await context.octokit.rest.issues.createComment({
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: payload.issue.number,
+    body,
+  });
+  return response?.data ? { id: response.data.id, body: response.data.body } : undefined;
+}
+
+async function updateMatchmakingComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">, commentId: number, body: string) {
+  const { payload } = context;
+  await context.octokit.rest.issues.updateComment({
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    comment_id: commentId,
+    body,
+  });
+}
+
+async function deleteMatchmakingComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">, commentId: number) {
+  const { payload } = context;
+  await context.octokit.rest.issues.deleteComment({
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    comment_id: commentId,
+  });
+}
+
+async function cleanupDuplicateMatchmakingComments(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">, preferredCommentId?: number) {
+  const comments = await listMatchmakingComments(context);
+  if (comments.length <= 1) {
+    return;
+  }
+  const keepComment = comments.find((comment) => comment.id === preferredCommentId) ?? comments.sort((a, b) => a.id - b.id)[0];
+  await Promise.all(comments.filter((comment) => comment.id !== keepComment.id).map((comment) => deleteMatchmakingComment(context, comment.id)));
 }
 
 type IssueMatchingEvents = "issues.opened" | "issues.edited" | "issues.labeled" | "issue_comment.created";
@@ -283,10 +326,10 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
 /**
  * Builds the comment to be added to the issue
  * @param matchResultArray The array of issues to be matched
- * @returns The comment to be added to the issue
+ * @returns The comment to be added
  */
 function commentBuilder(matchResultArray: Map<string, Array<string>>): string {
-  const commentLines: string[] = [">[!NOTE]", ">The following contributors may be suitable for this task:"];
+  const commentLines: string[] = [">[!NOTE]", MATCHMAKING_COMMENT_START];
   matchResultArray.forEach((issues: Array<string>, assignee: string) => {
     commentLines.push(`>### [${assignee}](https://www.github.com/${assignee})`);
     issues.forEach((issue: string) => {
