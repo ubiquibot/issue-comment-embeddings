@@ -25,6 +25,10 @@ export interface IssueGraphqlResponse {
   mostSimilarSentence: { sentence: string; similarity: number; index: number };
 }
 
+type IssueCommentSummary = {
+  body?: string | null;
+};
+
 /**
  * Checks if the current issue is a duplicate of an existing issue.
  * If a similar issue is found, a footnote is added to the current issue.
@@ -74,12 +78,12 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     const matchIssues = processedIssues.filter((issue) => parseFloat(issue.similarity) / 100 >= context.config.dedupeMatchThreshold);
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.dedupeMatchThreshold} already exists`, { matchIssues });
-      //To the issue body, add a footnote with the link to the similar issue
-      const updatedBody = await handleMatchIssuesComment(context, payload, cleanedIssueBody, processedIssues);
-      const outputBody = updatedBody || cleanedIssueBody;
+      const duplicateIssue = getMostSimilarIssue(matchIssues);
+      const outputBody = cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "duplicate";
+      await ensureFormalDuplicateComment(context, payload, originalIssue.number, duplicateIssue);
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
@@ -90,7 +94,7 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
         issue_number: originalIssue.number,
         body: nextBody,
         state: "closed",
-        state_reason: "not_planned",
+        state_reason: "duplicate",
       });
       return;
     }
@@ -121,6 +125,39 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
 
 function matchRepoOrgToSimilarIssueRepoOrg(repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
   return repoOrg === similarIssueRepoOrg && repoName === similarIssueRepoName;
+}
+
+function getMostSimilarIssue(issues: IssueGraphqlResponse[]): IssueGraphqlResponse {
+  return [...issues].sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity))[0];
+}
+
+function getFormalDuplicateComment(issue: IssueGraphqlResponse): string {
+  return `Duplicate of #${issue.node.number}`;
+}
+
+async function ensureFormalDuplicateComment(
+  context: Context,
+  payload: Context<"issues.opened" | "issues.edited">["payload"],
+  issueNumber: number,
+  duplicateIssue: IssueGraphqlResponse
+) {
+  const body = getFormalDuplicateComment(duplicateIssue);
+  const comments = (await context.octokit.paginate(context.octokit.rest.issues.listComments, {
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: issueNumber,
+  })) as IssueCommentSummary[];
+  if (comments.some((comment) => normalizeWhitespace(comment.body ?? "") === normalizeWhitespace(body))) {
+    context.logger.info("Formal duplicate comment already exists", { issueNumber, duplicateOf: duplicateIssue.node.number });
+    return;
+  }
+
+  await context.octokit.rest.issues.createComment({
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: issueNumber,
+    body,
+  });
 }
 
 function splitIntoSentences(text: string): string[] {
@@ -249,34 +286,6 @@ async function handleSimilarIssuesComment(
     issue_number: issueNumber,
     body: outputBody,
   });
-}
-
-//When similarity is greater than match threshold, Add Caution mentioning the issues to which its is very much similar
-async function handleMatchIssuesComment(
-  context: Context,
-  payload: Context<"issues.opened" | "issues.edited">["payload"],
-  issueBody: string,
-  relevantIssues: IssueGraphqlResponse[]
-): Promise<string | undefined> {
-  if (!issueBody) {
-    return;
-  }
-  // Find existing footnotes in the body
-  const footnoteRegex = /\[\^(\d+)\^\]/g;
-  const existingFootnotes = issueBody.match(footnoteRegex) || [];
-  // Find the index with respect to the issue body string where the footnotes start if they exist
-  const footnoteIndex = existingFootnotes[0] ? issueBody.indexOf(existingFootnotes[0]) : issueBody.length;
-  let resultBuilder = "\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n";
-  // Sort relevant issues by similarity in descending order
-  relevantIssues.sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity));
-  // Append the similar issues to the resultBuilder
-  relevantIssues.forEach((issue) => {
-    const modifiedUrl = issue.node.url.replace("https://github.com", "https://www.github.com");
-    resultBuilder += `> - [${issue.node.title}](${modifiedUrl}#${issue.node.number})\n`;
-  });
-  // Insert the resultBuilder into the issue body
-  // Update the issue with the modified body
-  return issueBody.slice(0, footnoteIndex) + resultBuilder + issueBody.slice(footnoteIndex);
 }
 
 // Process similar issues and return the list of similar issues with their similarity scores

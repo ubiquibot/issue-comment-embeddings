@@ -203,7 +203,7 @@ describe("Plugin tests", () => {
     }
   );
 
-  it("When an issue is created with similarity above match threshold, it should close the issue and add a caution alert", async () => {
+  it("When an issue is created with similarity above match threshold, it should close the issue as a formal duplicate", async () => {
     const [matchThresholdIssue1, matchThresholdIssue2] = fetchSimilarIssues("match_threshold_95");
     const { context } = createContextIssues(matchThresholdIssue1.issue_body, "match1", 3, matchThresholdIssue1.title);
     context.eventName = ISSUES_EDITED_EVENT_NAME;
@@ -259,15 +259,18 @@ describe("Plugin tests", () => {
       );
     });
 
+    context2.octokit.paginate = mock(async () => []) as unknown as typeof context2.octokit.paginate;
+    context2.octokit.rest.issues.createComment = mock(async (params: { issue_number: number; body: string }) => {
+      createComment(params.body, 999, "match2", params.issue_number);
+    }) as unknown as typeof context2.octokit.rest.issues.createComment;
     context2.octokit.rest.issues.update = mock(
       async (params: { owner: string; repo: string; issue_number: number; body?: string; state?: string; state_reason?: string }) => {
-        const updatedBody = `${matchThresholdIssue2.issue_body}\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n> - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n`;
         db.issue.update({
           where: {
             number: { equals: params.issue_number },
           },
           data: {
-            ...(params.body && { body: updatedBody }),
+            ...(params.body && { body: params.body }),
             ...(params.state && { state: params.state }),
             ...(params.state_reason && { state_reason: params.state_reason }),
           },
@@ -277,11 +280,11 @@ describe("Plugin tests", () => {
 
     await runPlugin(context2);
     const issue = db.issue.findFirst({ where: { number: { equals: 4 } } }) as unknown as Context["payload"]["issue"];
+    const duplicateComment = db.issueComments.findFirst({ where: { id: { equals: 999 } } });
     expect(issue.state).toBe("closed");
-    expect(issue.state_reason).toBe("not_planned");
-    expect(issue.body).toContain(">[!CAUTION]");
-    expect(issue.body).toContain("This issue may be a duplicate of the following issues:");
-    expect(issue.body).toContain(`- [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
+    expect(issue.state_reason).toBe("duplicate");
+    expect(issue.body).not.toContain(">[!CAUTION]");
+    expect(duplicateComment?.body).toBe("Duplicate of #3");
   });
 
   it("When issue matching is triggered, it should suggest contributors based on similarity", async () => {
