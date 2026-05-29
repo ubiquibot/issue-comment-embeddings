@@ -31,8 +31,33 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+type RepositoryContributor = {
+  login?: string | null;
+  contributions?: number;
+};
+
+const MIN_CONTEXT_ADJUSTED_SIMILARITY = 0.25;
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
+}
+
+function adjustSimilarityForRepositoryContext(
+  similarity: number,
+  currentRepository: { owner: { login: string }; name: string },
+  matchedRepository: { owner: { login: string }; name: string }
+) {
+  const currentOwner = currentRepository.owner.login.toLowerCase();
+  const matchedOwner = matchedRepository.owner.login.toLowerCase();
+  const currentRepo = currentRepository.name.toLowerCase();
+  const matchedRepo = matchedRepository.name.toLowerCase();
+
+  if (currentOwner === matchedOwner && currentRepo === matchedRepo) {
+    return similarity;
+  }
+
+  const penalty = currentOwner === matchedOwner ? 0.25 : 0.5;
+  return Math.max(0, similarity - penalty);
 }
 
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
@@ -219,7 +244,11 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
           if (options.allowedLogins && !options.allowedLogins.has(assignee.login)) {
             return;
           }
-          const similarityPercentage = Math.round(issue.similarity * 100);
+          const contextAdjustedSimilarity = adjustSimilarityForRepositoryContext(issue.similarity, payload.repository, issue.node.repository);
+          if (contextAdjustedSimilarity <= MIN_CONTEXT_ADJUSTED_SIMILARITY) {
+            return;
+          }
+          const similarityPercentage = Math.round(contextAdjustedSimilarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
@@ -235,6 +264,10 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
         });
       }
     });
+
+    if (matchResultArray.size === 0 && !options.allowedLogins) {
+      await addRepositoryContributorFallback(context, matchResultArray);
+    }
 
     if (options.ensureLogins) {
       for (const login of options.ensureLogins) {
@@ -259,6 +292,18 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     return { matchResultArray, similarIssues, sortedContributors };
   }
 
+  if (!options.allowedLogins) {
+    await addRepositoryContributorFallback(context, matchResultArray);
+    if (matchResultArray.size > 0) {
+      const sortedContributors = Array.from(matchResultArray.entries()).map(([login, matches]) => ({
+        login,
+        matches,
+        maxSimilarity: 0,
+      }));
+      return { matchResultArray, similarIssues: [], sortedContributors };
+    }
+  }
+
   if (options.ensureLogins && options.ensureLogins.length > 0) {
     for (const login of options.ensureLogins) {
       if (!matchResultArray.has(login)) {
@@ -278,6 +323,29 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
   logger.info(`Exiting issueMatching handler!`, { similarIssues: similarIssues || "No similar issues found" });
 
   return null;
+}
+
+async function addRepositoryContributorFallback(context: Context<IssueMatchingEvents>, matchResultArray: Map<string, Array<string>>) {
+  const { payload } = context;
+  try {
+    const contributorsResponse = (await context.octokit.rest.repos.listContributors({
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      per_page: 100,
+    })) as { data: RepositoryContributor[] };
+    const contributors = contributorsResponse.data;
+
+    const fallbackLimit = context.config.alwaysRecommend || 1;
+    contributors
+      .filter((contributor): contributor is RepositoryContributor & { login: string } => !!contributor.login)
+      .sort((a, b) => (b.contributions ?? 0) - (a.contributions ?? 0))
+      .slice(0, fallbackLimit)
+      .forEach((contributor) => {
+        matchResultArray.set(contributor.login, [`> Recent code ownership fallback: ${contributor.contributions ?? 0} repository contributions.`]);
+      });
+  } catch (error) {
+    context.logger.debug("Unable to fetch repository contributors for recommendation fallback.", { error: error as Error });
+  }
 }
 
 /**

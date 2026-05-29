@@ -23,6 +23,13 @@ const ISSUES_EDITED_EVENT_NAME = "issues.edited";
 
 dotenv.config();
 const octokit = new Octokit();
+const originalGraphql = octokit.graphql;
+const originalIssueCreateComment = octokit.rest.issues.createComment;
+const originalIssueGetComment = octokit.rest.issues.getComment;
+const originalIssueListComments = octokit.rest.issues.listComments;
+const originalIssueUpdate = octokit.rest.issues.update;
+const originalIssueUpdateComment = octokit.rest.issues.updateComment;
+const originalRepoListContributors = octokit.rest.repos.listContributors;
 let runPlugin: typeof import("../src/plugin").runPlugin;
 
 beforeAll(() => {
@@ -33,6 +40,13 @@ beforeAll(() => {
 });
 afterEach(() => {
   server.resetHandlers();
+  octokit.graphql = originalGraphql;
+  octokit.rest.issues.createComment = originalIssueCreateComment;
+  octokit.rest.issues.getComment = originalIssueGetComment;
+  octokit.rest.issues.listComments = originalIssueListComments;
+  octokit.rest.issues.update = originalIssueUpdate;
+  octokit.rest.issues.updateComment = originalIssueUpdateComment;
+  octokit.rest.repos.listContributors = originalRepoListContributors;
   mock.restore();
 });
 afterAll(() => server.close());
@@ -357,7 +371,7 @@ describe("Plugin tests", () => {
     // Mock graphql to return issue data with a contributor
     context.octokit.graphql = mock().mockResolvedValue({
       node: {
-        title: "Similar Issue",
+        title: STRINGS.SIMILAR_ISSUE,
         url: STRINGS.ISSUE_URL_TEMPLATE,
         state: "closed",
         stateReason: "COMPLETED",
@@ -379,6 +393,154 @@ describe("Plugin tests", () => {
     expect(comments[0].body).toContain(STRINGS.CONTRIBUTOR_SUGGESTION_TEXT);
     expect(comments[0].body).toContain("contributor3");
     expect(comments[0].body).toContain("50% Match");
+  });
+
+  it("When issue matching finds a same-org issue in a different repository, it should subtract 25 relevance points", async () => {
+    const [taskCompleteIssue] = fetchSimilarIssues("task_complete");
+    const issueNodeId = "task_complete_same_org";
+    const { context } = createContextIssues(taskCompleteIssue.issue_body, issueNodeId, 7, taskCompleteIssue.title);
+    context.eventName = ISSUES_EDITED_EVENT_NAME;
+
+    context.adapters.supabase.issue.findSimilarIssuesToMatch = mock(async () => [{ id: "same-org", issue_id: "same-org", similarity: 1 }]);
+
+    context.adapters.supabase.issue.createIssue = mock(async () => {
+      createIssue(
+        taskCompleteIssue.issue_body,
+        issueNodeId,
+        taskCompleteIssue.title,
+        7,
+        { login: "test", id: 1 },
+        "open",
+        null,
+        STRINGS.TEST_REPO,
+        STRINGS.USER_1
+      );
+    });
+
+    context.octokit.graphql = mock().mockResolvedValue({
+      node: {
+        title: STRINGS.SIMILAR_ISSUE,
+        url: `https://github.com/${STRINGS.USER_1}/${STRINGS.TEST_REPO_2}/issues/1`,
+        state: "closed",
+        stateReason: "COMPLETED",
+        closed: true,
+        repository: { owner: { login: STRINGS.USER_1 }, name: STRINGS.TEST_REPO_2 },
+        assignees: { nodes: [{ login: "contributor-same-org", url: "https://github.com/contributor-same-org" }] },
+      },
+    }) as unknown as typeof context.octokit.graphql;
+
+    context.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      createComment(params.body, 4, issueNodeId, params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
+    await runPlugin(context);
+
+    const comments = db.issueComments.findMany({ where: { node_id: { equals: issueNodeId } } });
+    expect(comments.length).toBe(1);
+    expect(comments[0].body).toContain("contributor-same-org");
+    expect(comments[0].body).toContain("75% Match");
+    expect(comments[0].body).not.toContain("100% Match");
+  });
+
+  it("When issue matching finds an issue from another organization, it should subtract 50 relevance points", async () => {
+    const [taskCompleteIssue] = fetchSimilarIssues("task_complete");
+    const issueNodeId = "task_complete_global";
+    const { context } = createContextIssues(taskCompleteIssue.issue_body, issueNodeId, 8, taskCompleteIssue.title);
+    context.eventName = ISSUES_EDITED_EVENT_NAME;
+
+    context.adapters.supabase.issue.findSimilarIssuesToMatch = mock(async () => [{ id: "global", issue_id: "global", similarity: 1 }]);
+
+    context.adapters.supabase.issue.createIssue = mock(async () => {
+      createIssue(
+        taskCompleteIssue.issue_body,
+        issueNodeId,
+        taskCompleteIssue.title,
+        8,
+        { login: "test", id: 1 },
+        "open",
+        null,
+        STRINGS.TEST_REPO,
+        STRINGS.USER_1
+      );
+    });
+
+    context.octokit.graphql = mock().mockResolvedValue({
+      node: {
+        title: STRINGS.SIMILAR_ISSUE,
+        url: "https://github.com/external-org/external-repo/issues/1",
+        state: "closed",
+        stateReason: "COMPLETED",
+        closed: true,
+        repository: { owner: { login: "external-org" }, name: "external-repo" },
+        assignees: { nodes: [{ login: "contributor-global", url: "https://github.com/contributor-global" }] },
+      },
+    }) as unknown as typeof context.octokit.graphql;
+
+    context.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      createComment(params.body, 5, issueNodeId, params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
+    await runPlugin(context);
+
+    const comments = db.issueComments.findMany({ where: { node_id: { equals: issueNodeId } } });
+    expect(comments.length).toBe(1);
+    expect(comments[0].body).toContain("contributor-global");
+    expect(comments[0].body).toContain("50% Match");
+    expect(comments[0].body).not.toContain("100% Match");
+  });
+
+  it("When context-adjusted issue matches are too weak, it should fallback to recent code contributors", async () => {
+    const [taskCompleteIssue] = fetchSimilarIssues("task_complete");
+    const issueNodeId = "task_complete_code_fallback";
+    const { context } = createContextIssues(taskCompleteIssue.issue_body, issueNodeId, 9, taskCompleteIssue.title);
+    context.eventName = ISSUES_EDITED_EVENT_NAME;
+
+    context.adapters.supabase.issue.findSimilarIssuesToMatch = mock(async () => [{ id: "weak-global", issue_id: "weak-global", similarity: 0.6 }]);
+
+    context.adapters.supabase.issue.createIssue = mock(async () => {
+      createIssue(
+        taskCompleteIssue.issue_body,
+        issueNodeId,
+        taskCompleteIssue.title,
+        9,
+        { login: "test", id: 1 },
+        "open",
+        null,
+        STRINGS.TEST_REPO,
+        STRINGS.USER_1
+      );
+    });
+
+    context.octokit.graphql = mock().mockResolvedValue({
+      node: {
+        title: STRINGS.SIMILAR_ISSUE,
+        url: "https://github.com/external-org/external-repo/issues/1",
+        state: "closed",
+        stateReason: "COMPLETED",
+        closed: true,
+        repository: { owner: { login: "external-org" }, name: "external-repo" },
+        assignees: { nodes: [{ login: "irrelevant-global", url: "https://github.com/irrelevant-global" }] },
+      },
+    }) as unknown as typeof context.octokit.graphql;
+
+    context.octokit.rest.repos.listContributors = mock(async () => ({
+      data: [
+        { login: "recent-code-owner", contributions: 42 },
+        { login: "another-contributor", contributions: 12 },
+      ],
+    })) as unknown as typeof context.octokit.rest.repos.listContributors;
+
+    context.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      createComment(params.body, 6, issueNodeId, params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
+    await runPlugin(context);
+
+    const comments = db.issueComments.findMany({ where: { node_id: { equals: issueNodeId } } });
+    expect(comments.length).toBe(1);
+    expect(comments[0].body).toContain("recent-code-owner");
+    expect(comments[0].body).toContain("Recent code ownership fallback: 42 repository contributions.");
+    expect(comments[0].body).not.toContain("irrelevant-global");
   });
 
   it("When an issue contains markdown links, footnotes should be added after the entire line", async () => {

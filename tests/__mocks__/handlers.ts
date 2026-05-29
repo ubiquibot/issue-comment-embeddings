@@ -49,6 +49,10 @@ export const handlers = [
     }
     return HttpResponse.json(item);
   }),
+  // get repository contributors
+  http.get("https://api.github.com/repos/:owner/:repo/contributors", () =>
+    HttpResponse.json(db.users.getAll().map((user, index) => ({ login: user.login, contributions: db.users.count() - index })))
+  ),
   // create comment
   http.post("https://api.github.com/repos/:owner/:repo/issues/:issue_number/comments", async ({ params: { issue_number: issueNumber }, request }) => {
     const { body } = await getValue(request.body);
