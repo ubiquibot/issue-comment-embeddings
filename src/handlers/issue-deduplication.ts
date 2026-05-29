@@ -3,9 +3,10 @@ import { JSDOM } from "jsdom";
 import { marked } from "marked";
 import { IssueSimilaritySearchResult } from "../adapters/supabase/helpers/issues";
 import { Context } from "../types/index";
+import { formatGitHubUrl } from "../helpers/github";
 import { appendPluginUpdateComment, normalizeWhitespace, stripHtmlComments, stripPluginUpdateComments } from "../utils/markdown-comments";
 import { appendFootnoteRefsToFirstLine, insertFootnoteRefNearSentence } from "../utils/footnote-placement";
-import { stripDuplicateFootnotes } from "../utils/footnotes";
+import { createDuplicateFootnoteRef, getHighestDuplicateFootnoteIndex, stripDuplicateFootnotes } from "../utils/footnotes";
 import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
@@ -193,10 +194,7 @@ async function handleSimilarIssuesComment(
   if (!issueBody) {
     return;
   }
-  // Find existing footnotes in the body
-  const footnoteRegex = /\[\^(\d+)\^\]/g;
-  const existingFootnotes = issueBody.match(footnoteRegex) || [];
-  const highestFootnoteIndex = existingFootnotes.length > 0 ? Math.max(...existingFootnotes.map((fn) => parseInt(fn.match(/\d+/)?.[0] ?? "0"))) : 0;
+  const highestFootnoteIndex = getHighestDuplicateFootnoteIndex(issueBody);
   let updatedBody = issueBody;
   const footnotes: string[] = [];
   const orphanRefs: string[] = [];
@@ -204,8 +202,8 @@ async function handleSimilarIssuesComment(
   relevantIssues.sort((a, b) => parseFloat(a.similarity) - parseFloat(b.similarity));
   relevantIssues.forEach((issue, index) => {
     const footnoteIndex = highestFootnoteIndex + index + 1; // Continue numbering from the highest existing footnote number
-    const footnoteRef = `[^0${footnoteIndex}^]`;
-    const modifiedUrl = issue.node.url.replace("https://github.com", "https://www.github.com");
+    const footnoteRef = createDuplicateFootnoteRef(footnoteIndex);
+    const modifiedUrl = formatGitHubUrl(issue.node.url);
     const { sentence } = issue.mostSimilarSentence;
     // Insert footnote reference in the body
     if (!sentence.trim()) {
@@ -228,7 +226,7 @@ async function handleSimilarIssuesComment(
     }
 
     // Add new footnote to the array
-    footnotes.push(`${footnoteRef}: ⚠ ${issue.similarity}% possible duplicate - [${issue.node.title}](${modifiedUrl}#${issue.node.number})\n\n`);
+    footnotes.push(`${footnoteRef}: ⚠ ${issue.similarity}% possible duplicate - [${issue.node.title}](${modifiedUrl})\n\n`);
   });
   if (orphanRefs.length > 0) {
     updatedBody = appendFootnoteRefsToFirstLine(updatedBody, orphanRefs);
@@ -271,8 +269,8 @@ async function handleMatchIssuesComment(
   relevantIssues.sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity));
   // Append the similar issues to the resultBuilder
   relevantIssues.forEach((issue) => {
-    const modifiedUrl = issue.node.url.replace("https://github.com", "https://www.github.com");
-    resultBuilder += `> - [${issue.node.title}](${modifiedUrl}#${issue.node.number})\n`;
+    const modifiedUrl = formatGitHubUrl(issue.node.url);
+    resultBuilder += `> - [${issue.node.title}](${modifiedUrl})\n`;
   });
   // Insert the resultBuilder into the issue body
   // Update the issue with the modified body
@@ -401,7 +399,7 @@ export async function cleanContent(context: Context, content: string): Promise<s
  * @returns True if a duplicate footnote exists, false otherwise
  */
 export function checkIfDuplicateFootNoteExists(content: string): boolean {
-  const footnoteDefRegex = /\[\^(\d+)\^\]: ⚠ \d+% possible duplicate - [^\n]+(\n|$)/g;
+  const footnoteDefRegex = /\[\^((?:deduplication-)?\d+)\^\]: [^\n]*\d+% possible duplicate - [^\n]+(\n|$)/g;
   const footnotes = content.match(footnoteDefRegex);
   return !!footnotes;
 }

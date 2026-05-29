@@ -1,3 +1,4 @@
+import ms from "ms";
 import { Env } from "../types/env";
 
 export type EmbeddingQueueSettings = {
@@ -50,11 +51,31 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
   return parsed;
 }
 
+function parseDurationMs(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const normalized = value.trim();
+  const numericMs = Number(normalized);
+  if (Number.isFinite(numericMs) && numericMs >= 0) {
+    return numericMs;
+  }
+  try {
+    const parsed = ms(normalized);
+    if (typeof parsed === "number" && Number.isFinite(parsed) && parsed >= 0) {
+      return parsed;
+    }
+  } catch {
+    return fallback;
+  }
+  return fallback;
+}
+
 export function getEmbeddingQueueSettings(env: Env): EmbeddingQueueSettings {
   return {
     enabled: parseBoolean(env.EMBEDDINGS_QUEUE_ENABLED, isQueueEnabledByDefault),
     batchSize: parsePositiveInt(env.EMBEDDINGS_QUEUE_BATCH_SIZE, DEFAULT_BATCH_SIZE),
-    delayMs: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
+    delayMs: parseDurationMs(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
     maxRetries: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_MAX_RETRIES, DEFAULT_MAX_RETRIES),
     concurrency: parsePositiveInt(env.EMBEDDINGS_QUEUE_CONCURRENCY, DEFAULT_CONCURRENCY),
   };

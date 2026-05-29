@@ -1,4 +1,5 @@
 import { Context } from "../types/index";
+import { parseGitHubIssueCommentId } from "../helpers/github";
 import { annotate } from "./annotate";
 import { issueMatching, issueMatchingForUsers } from "./issue-matching";
 
@@ -46,8 +47,6 @@ async function postCommandResponse(context: Context<"issue_comment.created">, bo
 }
 
 export async function commandHandler(context: Context<"issue_comment.created">) {
-  const { logger } = context;
-
   if (!context.command) {
     return;
   }
@@ -57,19 +56,16 @@ export async function commandHandler(context: Context<"issue_comment.created">) 
     const scope = context.command.parameters.scope ?? "org";
     let commentId = null;
     if (commentUrl) {
-      const commentRegex = /#issuecomment-(\d+)$/;
-      const match = commentUrl.match(commentRegex);
-      if (!match) {
-        throw logger.error("Invalid comment URL");
+      commentId = parseGitHubIssueCommentId(commentUrl);
+      if (!commentId) {
+        throw context.logger.info("Invalid comment URL");
       }
-      commentId = match[1];
     }
     await annotate(context, commentId, scope);
   }
 }
 
 export async function userAnnotate(context: Context<"issue_comment.created">) {
-  const { logger } = context;
   const comment = context.payload.comment;
   const splitComment = comment.body.trim().split(/\s+/);
   const commandName = splitComment[0].replace("/", "");
@@ -84,17 +80,15 @@ export async function userAnnotate(context: Context<"issue_comment.created">) {
         scope = splitComment[2];
 
         if (scope !== "global" && scope !== "org" && scope !== "repo") {
-          throw logger.error("Invalid scope");
+          throw context.logger.info("Invalid scope");
         }
 
-        const commentRegex = /#issuecomment-(\d+)$/;
-        const match = commentUrl.match(commentRegex);
-        if (!match) {
-          throw logger.error("Invalid comment URL");
+        commentId = parseGitHubIssueCommentId(commentUrl);
+        if (!commentId) {
+          throw context.logger.info("Invalid comment URL");
         }
-        commentId = match[1];
       } else {
-        throw logger.error("Invalid parameters");
+        throw context.logger.info("Invalid parameters");
       }
     }
     await annotate(context, commentId, scope);
