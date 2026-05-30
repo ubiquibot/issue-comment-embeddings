@@ -15,9 +15,13 @@ export const pluginSettingsSchema = T.Object(
       default: 0.65,
       description: "The minimum similarity score for including similar issues as annotations in the comment footnotes.",
     }),
-    jobMatchingThreshold: T.Number({ default: 0.75, description: "The minimum similarity score when considering users to be suitable for a job." }),
+    jobMatchingThreshold: T.Number({ default: 0.75, description: "The minimum similarity score when considering users to be suitable for a task." }),
     alwaysRecommend: T.Optional(
-      T.Number({ default: 0, description: "If set to a value greater than 0, the bot will always recommend contributors, regardless of the similarity score." })
+      T.Number({
+        default: 0,
+        description:
+          "The number of recommended contributors to show. If greater than 0, contributors will always be recommended regardless of the similarity score (setting similarity threshold to 0).",
+      })
     ),
     demoFlag: T.Boolean({ default: false, description: "When true, disables storing issues and comments in the database." }),
   },

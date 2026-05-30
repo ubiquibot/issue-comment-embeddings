@@ -59,16 +59,19 @@ export class LlmAdapter {
         );
 
         if (isAsyncIterable(response)) {
-          throw this.context.logger.error("Unexpected streaming response from the LLM.");
+          this.context.logger.error("Unexpected streaming response from the LLM.");
+          throw new Error("Unexpected streaming response from the LLM.");
         }
 
         if (!isChatCompletionLike(response) || !Array.isArray(response.choices)) {
-          throw this.context.logger.error("Unexpected LLM response shape.", { responseType: typeof response });
+          this.context.logger.error("Unexpected LLM response shape.", { responseType: typeof response });
+          throw new Error("Unexpected LLM response shape.");
         }
 
         const content = response.choices?.[0]?.message?.content;
         if (typeof content !== "string" || !content.trim()) {
-          throw this.context.logger.error("Failed to get a completion from the LLM.");
+          this.context.logger.error("Failed to get a completion from the LLM.");
+          throw new Error("Failed to get a completion from the LLM.");
         }
         this.context.logger.info("LLM response", { response });
         return String(content);

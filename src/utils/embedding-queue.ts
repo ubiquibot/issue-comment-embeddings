@@ -1,4 +1,5 @@
 import { Env } from "../types/env";
+import ms from "ms";
 
 export type EmbeddingQueueSettings = {
   enabled: boolean;
@@ -50,11 +51,35 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
   return parsed;
 }
 
+function parseDelayMs(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+  const parsedInt = Number.parseInt(trimmed, 10);
+  if (Number.isFinite(parsedInt) && String(parsedInt) === trimmed) {
+    return parsedInt >= 0 ? parsedInt : fallback;
+  }
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const parsedMs = ms(trimmed as any) as unknown as number;
+    if (parsedMs !== undefined && typeof parsedMs === "number" && Number.isFinite(parsedMs) && parsedMs >= 0) {
+      return parsedMs;
+    }
+  } catch {
+    // ignore
+  }
+  return fallback;
+}
+
 export function getEmbeddingQueueSettings(env: Env): EmbeddingQueueSettings {
   return {
     enabled: parseBoolean(env.EMBEDDINGS_QUEUE_ENABLED, isQueueEnabledByDefault),
     batchSize: parsePositiveInt(env.EMBEDDINGS_QUEUE_BATCH_SIZE, DEFAULT_BATCH_SIZE),
-    delayMs: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
+    delayMs: parseDelayMs(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
     maxRetries: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_MAX_RETRIES, DEFAULT_MAX_RETRIES),
     concurrency: parsePositiveInt(env.EMBEDDINGS_QUEUE_CONCURRENCY, DEFAULT_CONCURRENCY),
   };
