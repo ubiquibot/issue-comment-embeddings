@@ -75,10 +75,16 @@ export class Comment extends SuperSupabase {
       });
       return;
     }
+    const model = this.context.config.embeddingModel ?? "voyage-4-large";
+
     //Create the embedding for this comment
     let embedding: number[] | null = null;
     if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
-      embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      if (model === "nomic-embed-text-v1.5") {
+        embedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
@@ -95,6 +101,8 @@ export class Comment extends SuperSupabase {
         markdown: finalMarkdown,
         author_id: commentData.author_id,
         embedding: serializeEmbeddingForDatabase(embedding),
+        embedding_model: model,
+        embedding_dim: 1024,
         payload: finalPayload,
       },
     ]);
@@ -117,10 +125,18 @@ export class Comment extends SuperSupabase {
     const isShortComment = isTooShort(cleanedMarkdown, MIN_COMMENT_MARKDOWN_LENGTH);
     const shouldSkipEmbedding = isCommandComment || isShortComment;
     const embeddingSource = shouldSkipEmbedding ? null : cleanedMarkdown;
+    const model = this.context.config.embeddingModel ?? "voyage-4-large";
+
     //Create the embedding for this comment
     let embedding: number[] | null = null;
     if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
-      embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
+      let rawEmbedding;
+      if (model === "nomic-embed-text-v1.5") {
+        rawEmbedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        rawEmbedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
+      embedding = Array.from(rawEmbedding);
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
@@ -141,6 +157,8 @@ export class Comment extends SuperSupabase {
           parent_id: commentData.issue_id,
           markdown: finalMarkdown,
           embedding: serializeEmbeddingForDatabase(embedding),
+          embedding_model: model,
+          embedding_dim: 1024,
           payload: finalPayload,
           modified_at: new Date(),
         })
@@ -224,12 +242,19 @@ export class Comment extends SuperSupabase {
         });
         return null;
       }
-      const embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      const model = this.context.config.embeddingModel ?? "voyage-4-large";
+      let embedding;
+      if (model === "nomic-embed-text-v1.5") {
+        embedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
       const { data, error } = await this.supabase.rpc("find_similar_comments_annotate", {
         query_embedding: embedding,
         current_id: currentId,
         threshold,
         top_k: 5,
+        query_model: model,
       });
       if (error) {
         this.context.logger.error("Unable to find similar comments", {

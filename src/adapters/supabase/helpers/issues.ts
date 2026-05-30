@@ -88,10 +88,16 @@ export class Issue extends SuperSupabase {
       return;
     }
 
+    const model = this.context.config.embeddingModel ?? "voyage-4-large";
+
     //Create the embedding for this issue
     let embedding: number[] | null = null;
     if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
-      embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      if (model === "nomic-embed-text-v1.5") {
+        embedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
     }
     let finalMarkdown = isShortIssue ? null : issueData.markdown;
     let finalPayload = issueData.payload;
@@ -107,6 +113,8 @@ export class Issue extends SuperSupabase {
         doc_type: docType,
         parent_id: null,
         embedding: serializeEmbeddingForDatabase(embedding),
+        embedding_model: model,
+        embedding_dim: 1024,
         payload: finalPayload,
         author_id: issueData.author_id,
         markdown: finalMarkdown,
@@ -129,10 +137,18 @@ export class Issue extends SuperSupabase {
     const cleanedMarkdown = cleanMarkdown(issueData.markdown);
     const isShortIssue = isTooShort(cleanedMarkdown, MIN_ISSUE_MARKDOWN_LENGTH);
     const embeddingSource = !isShortIssue ? cleanedMarkdown : null;
+    const model = this.context.config.embeddingModel ?? "voyage-4-large";
+
     //Create the embedding for this issue
     let embedding: number[] | null = null;
     if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
-      embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
+      let rawEmbedding;
+      if (model === "nomic-embed-text-v1.5") {
+        rawEmbedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        rawEmbedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
+      embedding = Array.from(rawEmbedding);
     }
     let finalMarkdown = isShortIssue ? null : issueData.markdown;
     let finalPayload = issueData.payload;
@@ -155,6 +171,8 @@ export class Issue extends SuperSupabase {
         doc_type: docType,
         markdown: finalMarkdown,
         embedding: serializeEmbeddingForDatabase(embedding),
+        embedding_model: model,
+        embedding_dim: 1024,
         payload: finalPayload,
         modified_at: new Date(),
       })
@@ -229,12 +247,19 @@ export class Issue extends SuperSupabase {
         });
         return null;
       }
-      const embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      const model = this.context.config.embeddingModel ?? "voyage-4-large";
+      let embedding;
+      if (model === "nomic-embed-text-v1.5") {
+        embedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
       const { data, error } = await this.supabase.rpc("find_similar_issues_annotate", {
         query_embedding: embedding,
         current_id: currentId,
         threshold,
         top_k: 5,
+        query_model: model,
       });
       if (error) {
         this.context.logger.error("Unable to find similar issues", {
@@ -274,12 +299,19 @@ export class Issue extends SuperSupabase {
         });
         return null;
       }
-      const embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      const model = this.context.config.embeddingModel ?? "voyage-4-large";
+      let embedding;
+      if (model === "nomic-embed-text-v1.5") {
+        embedding = await this.context.adapters.nomic.embedding.createEmbedding(embeddingSource);
+      } else {
+        embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+      }
       const { data, error } = await this.supabase.rpc("find_similar_issues_to_match", {
         current_id: currentId,
         query_embedding: embedding,
         threshold,
         top_k: topK ?? 5,
+        query_model: model,
       });
       if (error) {
         this.context.logger.error("Error finding similar issues", {

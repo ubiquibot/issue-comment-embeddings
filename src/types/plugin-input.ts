@@ -19,6 +19,12 @@ export const pluginSettingsSchema = T.Object(
     alwaysRecommend: T.Optional(
       T.Number({ default: 0, description: "If set to a value greater than 0, the bot will always recommend contributors, regardless of the similarity score." })
     ),
+    embeddingModel: T.Optional(
+      T.Union([T.Literal("voyage-4-large"), T.Literal("nomic-embed-text-v1.5")], {
+        default: "voyage-4-large",
+        description: "The vector embedding model to use.",
+      })
+    ),
     demoFlag: T.Boolean({ default: false, description: "When true, disables storing issues and comments in the database." }),
   },
   { default: {} }
