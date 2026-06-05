@@ -31,8 +31,24 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+type RepositoryContext = {
+  owner: string;
+  name: string;
+};
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
+}
+
+function calculateContextAdjustedSimilarity(rawSimilarity: number, currentRepository: RepositoryContext, similarRepository: RepositoryContext): number {
+  const isSameRepository = currentRepository.owner === similarRepository.owner && currentRepository.name === similarRepository.name;
+  if (isSameRepository) {
+    return rawSimilarity;
+  }
+
+  const isSameOrganization = currentRepository.owner === similarRepository.owner;
+  const contextPenalty = isSameOrganization ? 0.25 : 0.5;
+  return Math.max(rawSimilarity - contextPenalty, 0);
 }
 
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
@@ -145,6 +161,10 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
   }
   const issueContent = issue.body + issue.title;
   const matchResultArray: Map<string, Array<string>> = new Map();
+  const currentRepository = {
+    owner: payload.repository.owner.login,
+    name: payload.repository.name,
+  };
 
   // If alwaysRecommend is enabled, use a lower threshold to ensure we get enough recommendations
   const threshold =
@@ -219,7 +239,11 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
           if (options.allowedLogins && !options.allowedLogins.has(assignee.login)) {
             return;
           }
-          const similarityPercentage = Math.round(issue.similarity * 100);
+          const adjustedSimilarity = calculateContextAdjustedSimilarity(issue.similarity, currentRepository, {
+            owner: issue.node.repository.owner.login,
+            name: issue.node.repository.name,
+          });
+          const similarityPercentage = Math.round(adjustedSimilarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
