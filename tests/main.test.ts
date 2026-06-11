@@ -579,6 +579,30 @@ describe("Plugin tests", () => {
     expect(comment.embedding).toBeDefined();
   });
 
+  it("When a specified annotate comment cannot be fetched, it should explain the organization permission boundary", async () => {
+    const { context, errorSpy } = createContext("/annotate /#issuecomment-404 repo", 1, 1, 2, "createAnnotate", DEFAULT_ISSUE_ID);
+    const notFoundError = new Error("Not Found") as Error & { status: number };
+    notFoundError.status = 404;
+
+    context.octokit.rest.issues.getComment = mock(async () => {
+      throw notFoundError;
+    }) as unknown as typeof octokit.rest.issues.getComment;
+
+    let caughtError: unknown;
+    try {
+      await runPlugin(context);
+    } catch (error) {
+      caughtError = error;
+    }
+
+    expect(caughtError).toBeDefined();
+    const permissionErrorCall = errorSpy.mock.calls.find(([message]) => String(message).includes("Unable to annotate the requested comment"));
+    expect(permissionErrorCall).toBeDefined();
+    expect(String(permissionErrorCall?.[0])).toContain("outside the current organization");
+    expect(String(permissionErrorCall?.[0])).toContain("GitHub App installation does not have permission");
+    expect(permissionErrorCall?.[1]).toMatchObject({ commentId: "404", owner: STRINGS.USER_1, repo: STRINGS.TEST_REPO });
+  });
+
   it("When a user uses annotate command with a specified comment and 'repo' scope and the comment doesn't have similarity above match threshold with any issue from the same repository, it shouldn't update comment body with footnotes", async () => {
     const [annotateIssue] = fetchSimilarIssues("annotate");
     const { context } = createContextIssues(annotateIssue.issue_body, "annotate", 9, annotateIssue.title);

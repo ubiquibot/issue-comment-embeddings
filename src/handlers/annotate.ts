@@ -43,13 +43,30 @@ export async function annotate(context: Context<"issue_comment.created">, commen
       logger.error("No comments before the annotate command");
     }
   } else {
-    const { data } = await octokit.rest.issues.getComment({
-      owner: repository.owner.login,
-      repo: repository.name,
-      comment_id: parseInt(commentId, 10),
-    });
-    await commentChecker(context, data, scope);
+    try {
+      const { data } = await octokit.rest.issues.getComment({
+        owner: repository.owner.login,
+        repo: repository.name,
+        comment_id: parseInt(commentId, 10),
+      });
+      await commentChecker(context, data, scope);
+    } catch (error) {
+      if (isGitHubNotFoundError(error)) {
+        throw logger.error(
+          `Unable to annotate the requested comment. It may be outside the current organization (${repository.owner.login}) or the GitHub App installation does not have permission to read it.`,
+          { commentId, owner: repository.owner.login, repo: repository.name }
+        );
+      }
+      throw error;
+    }
   }
+}
+
+function isGitHubNotFoundError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "status" in error) {
+    return (error as { status?: number }).status === 404;
+  }
+  return error instanceof Error && /\bNot Found\b/i.test(error.message);
 }
 
 /**
