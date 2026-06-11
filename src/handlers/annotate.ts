@@ -133,14 +133,21 @@ function filterByScope(scope: string, repoOrg: string, similarIssueRepoOrg: stri
 }
 
 async function handleSimilarIssuesAndComments(
-  context: Context,
-  payload: Context["payload"],
+  context: Context<"issue_comment.created">,
+  payload: Context<"issue_comment.created">["payload"],
   commentBody: string,
   commentId: number,
   issueList: IssueGraphqlResponse[],
   commentList: CommentGraphqlResponse[]
 ) {
   if (!issueList.length && !commentList.length) {
+    const thresholdPercent = Math.round(context.config.annotateThreshold * 100);
+    await context.octokit.rest.issues.createComment({
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      issue_number: payload.issue.number,
+      body: `>[!NOTE]\n> Annotation completed successfully, but no similar issues or comments were found above the ${thresholdPercent}% similarity threshold.`,
+    });
     return;
   }
   // Find existing footnotes in the body
