@@ -1,4 +1,8 @@
+import { createRequire } from "node:module";
 import { Env } from "../types/env";
+
+const require = createRequire(import.meta.url);
+const parseMs = require("ms") as (value: string) => number | undefined;
 
 export type EmbeddingQueueSettings = {
   enabled: boolean;
@@ -50,11 +54,26 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
   return parsed;
 }
 
+function parseDelayMs(value: string | undefined, fallback: number): number {
+  if (value === undefined) {
+    return fallback;
+  }
+  const normalized = value.trim();
+  if (/^\d+$/.test(normalized)) {
+    return parseNonNegativeInt(normalized, fallback);
+  }
+  const parsed = parseMs(normalized);
+  if (typeof parsed !== "number" || !Number.isFinite(parsed) || parsed < 0) {
+    return fallback;
+  }
+  return parsed;
+}
+
 export function getEmbeddingQueueSettings(env: Env): EmbeddingQueueSettings {
   return {
     enabled: parseBoolean(env.EMBEDDINGS_QUEUE_ENABLED, isQueueEnabledByDefault),
     batchSize: parsePositiveInt(env.EMBEDDINGS_QUEUE_BATCH_SIZE, DEFAULT_BATCH_SIZE),
-    delayMs: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
+    delayMs: parseDelayMs(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
     maxRetries: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_MAX_RETRIES, DEFAULT_MAX_RETRIES),
     concurrency: parsePositiveInt(env.EMBEDDINGS_QUEUE_CONCURRENCY, DEFAULT_CONCURRENCY),
   };

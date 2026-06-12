@@ -153,6 +153,17 @@ describe("/recommendations route", () => {
     expect(mocks.closeMock).toHaveBeenCalledTimes(1);
   });
 
+  it("accepts GitHub issue URLs without a protocol", async () => {
+    const matchResult = createMatchResult();
+    const { recommendationsRoute, mocks } = setupRoute({ issueMatchingResult: matchResult });
+    const url = "github.com/foo/bar/issues/42";
+    const response = await recommendationsRoute(createContext([url]));
+    const payload = await response.json();
+
+    expect(payload).toEqual({ [url]: matchResult });
+    expect(mocks.issuesGetMock).toHaveBeenCalledWith({ owner: "foo", repo: "bar", issue_number: 42 });
+  });
+
   it("returns a result for every requested user", async () => {
     const matchResult: MatchResult = {
       matchResultArray: {

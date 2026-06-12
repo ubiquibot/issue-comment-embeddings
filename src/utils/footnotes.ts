@@ -1,4 +1,5 @@
-const FOOTNOTE_DEF_REGEX = /\[\^(\d+)\^\]: ⚠ \d+% possible duplicate - [^\n]+(\n|$)/g;
+const FOOTNOTE_DEF_REGEX = /\[\^(?:deduplication-)?\d+\^\]: .*possible duplicate - [^\n]+(\n|$)/g;
+const FOOTNOTE_REF_REGEX = /\[\^((?:deduplication-)?\d+)\^\]/;
 
 export function removeCautionMessages(content: string): string {
   const cautionRegex = />[!CAUTION]\n> This issue may be a duplicate of the following issues:\n((> - \[[^\]]+\]\([^)]+\)\n)+)/g;
@@ -10,11 +11,11 @@ export function stripDuplicateFootnotes(content: string): string {
   let contentWithoutFootnotes = content.replace(FOOTNOTE_DEF_REGEX, "");
   if (footnotes) {
     footnotes.forEach((footnote) => {
-      const footnoteNumber = footnote.match(/\d+/)?.[0];
-      if (!footnoteNumber) {
+      const footnoteRef = footnote.match(FOOTNOTE_REF_REGEX)?.[1];
+      if (!footnoteRef) {
         return;
       }
-      contentWithoutFootnotes = contentWithoutFootnotes.replace(new RegExp(`\\[\\^${footnoteNumber}\\^\\]`, "g"), "");
+      contentWithoutFootnotes = contentWithoutFootnotes.replace(new RegExp(`\\[\\^${footnoteRef}\\^\\]`, "g"), "");
     });
   }
   return removeCautionMessages(contentWithoutFootnotes);
