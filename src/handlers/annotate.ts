@@ -23,6 +23,11 @@ interface CommentGraphqlResponse {
   mostSimilarSentence: { sentence: string; similarity: number; index: number };
 }
 
+const NO_ANNOTATE_MATCHES_COMMENT = [
+  ">[!NOTE]",
+  "> Annotation completed successfully, but no similar issues or comments were found above the configured threshold.",
+].join("\n");
+
 export async function annotate(context: Context<"issue_comment.created">, commentId: string | null, scope: string) {
   const { logger, octokit, payload } = context;
 
@@ -141,6 +146,12 @@ async function handleSimilarIssuesAndComments(
   commentList: CommentGraphqlResponse[]
 ) {
   if (!issueList.length && !commentList.length) {
+    if (context.commentHandler) {
+      await context.commentHandler.postComment(context, context.logger.info(NO_ANNOTATE_MATCHES_COMMENT), {
+        raw: true,
+        commentKind: "command-response",
+      });
+    }
     return;
   }
   // Find existing footnotes in the body
