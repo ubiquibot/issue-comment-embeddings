@@ -31,6 +31,20 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+type RepositoryIdentity = {
+  owner: string;
+  name: string;
+};
+
+export function getContextAdjustedSimilarity(similarity: number, currentRepository: RepositoryIdentity, matchedRepository: RepositoryIdentity): number {
+  if (currentRepository.owner === matchedRepository.owner && currentRepository.name === matchedRepository.name) {
+    return similarity;
+  }
+
+  const penalty = currentRepository.owner === matchedRepository.owner ? 0.25 : 0.5;
+  return Math.max(0, similarity - penalty);
+}
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
 }
@@ -154,7 +168,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     markdown: issueContent,
     threshold: threshold,
     currentId: issue.node_id,
-    topK: options.topK,
+    topK: options.topK ?? 50,
   });
 
   if (similarIssues && similarIssues.length > 0) {
@@ -204,11 +218,26 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     const issueList = await Promise.allSettled(fetchPromises);
 
     logger.debug("Fetched similar issues", { issueList });
-    issueList.forEach((issuePromise: PromiseSettledResult<IssueGraphqlResponse | null>) => {
-      if (!issuePromise || issuePromise.status === "rejected" || !issuePromise.value) {
-        return;
-      }
-      const issue = issuePromise.value as IssueGraphqlResponse;
+    const currentRepository = {
+      owner: payload.repository.owner.login,
+      name: payload.repository.name,
+    };
+    const matchedIssues = issueList
+      .flatMap((issuePromise: PromiseSettledResult<IssueGraphqlResponse | null>) => {
+        if (!issuePromise || issuePromise.status === "rejected" || !issuePromise.value) {
+          return [];
+        }
+
+        const issue = issuePromise.value as IssueGraphqlResponse;
+        issue.similarity = getContextAdjustedSimilarity(issue.similarity, currentRepository, {
+          owner: issue.node.repository.owner.login,
+          name: issue.node.repository.name,
+        });
+        return [issue];
+      })
+      .sort((a, b) => b.similarity - a.similarity);
+
+    matchedIssues.forEach((issue) => {
       const hasAssignees = issue.node.assignees.nodes.length > 0;
       const isCompletedWithAssignees = issue.node.closed && issue.node.stateReason === "COMPLETED" && hasAssignees;
       const isEligible = options.includeNonCompleted ? hasAssignees : isCompletedWithAssignees;
