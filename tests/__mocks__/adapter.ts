@@ -4,6 +4,7 @@ import { STRINGS } from "./strings";
 import { jest } from "@jest/globals";
 import { IssueData } from "../../src/adapters/supabase/helpers/issues";
 import { stripHtmlComments } from "../../src/utils/markdown-comments";
+import { shouldRedactPrivateRepoContent } from "../../src/utils/private-redaction";
 
 export interface CommentMock {
   id: string;
@@ -36,7 +37,8 @@ export function createMockAdapters(context: Context) {
             throw new Error("Comment already exists");
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
+          const shouldRedact = shouldRedactPrivateRepoContent(commentData.isPrivate, context.config.redactPrivateRepoComments);
+          const embeddingSource = shouldRedact ? "" : cleanedMarkdown;
           const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
           commentMap.set(commentData.id, {
             id: commentData.id,
@@ -52,7 +54,8 @@ export function createMockAdapters(context: Context) {
             throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
+          const shouldRedact = shouldRedactPrivateRepoContent(commentData.isPrivate, context.config.redactPrivateRepoComments);
+          const embeddingSource = shouldRedact ? "" : cleanedMarkdown;
           const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
           commentMap.set(commentData.id, {
             id: commentData.id,

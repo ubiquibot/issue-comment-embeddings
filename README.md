@@ -39,6 +39,7 @@ Deployment notes:
     dedupeWarningThreshold: 0.75
     annotateThreshold: 0.65
     jobMatchingThreshold: 0.75
+    redactPrivateRepoComments: false
 ```
 
 ## Recommendations
@@ -92,6 +93,8 @@ Deployment notes:
 ## Technical Implementation Details
 
 This implementation leverages vector embeddings for intelligent issue management, combining modern NLP techniques with robust data storage to create a sophisticated issue tracking and deduplication system.
+
+Set `redactPrivateRepoComments: true` to strip stored markdown, payloads, and embeddings for private repository issues and comments. The default is `false`, which captures private repository content for research and matching when the database is trusted.
 
 ### Architecture Overview
 
@@ -169,21 +172,20 @@ This allows the system to:
 - Find related issues based on content similarity
 - Maintain a clean issue tracker by preventing redundancy
 
-#### 2. Secure Storage for Private Issues
+#### 2. Configurable Storage for Private Issues
 
-The system implements privacy-conscious storage of issue data:
+The system can redact private repository data when `redactPrivateRepoComments` is enabled:
 
 ```typescript
-if (isPrivate) {
+if (shouldRedactPrivateRepoContent(isPrivate, context.config.redactPrivateRepoComments)) {
   finalMarkdown = null;
   finalPayload = null;
-  plaintext = null;
+  embedding = null;
 }
 
 const { data, error } = await this.supabase.from("issues").insert([
   {
     id: issueData.id,
-    plaintext,
     embedding,
     payload: finalPayload,
     author_id: issueData.author_id,
@@ -192,7 +194,7 @@ const { data, error } = await this.supabase.from("issues").insert([
 ]);
 ```
 
-This ensures that private issues are handled appropriately while still maintaining the vector embedding functionality.
+By default, private repository content is captured for research and matching. Set `redactPrivateRepoComments: true` when a deployment should strip private issue and comment markdown, payloads, and embeddings before storage.
 
 #### 3. Real-time Updates
 
