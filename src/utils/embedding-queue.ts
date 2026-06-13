@@ -3,6 +3,7 @@ import { Env } from "../types/env";
 export type EmbeddingQueueSettings = {
   enabled: boolean;
   batchSize: number;
+  maxBatchTokens: number;
   delayMs: number;
   maxRetries: number;
   concurrency: number;
@@ -10,6 +11,7 @@ export type EmbeddingQueueSettings = {
 
 const isQueueEnabledByDefault = true;
 const DEFAULT_BATCH_SIZE = 50;
+const DEFAULT_MAX_BATCH_TOKENS = 24_000;
 const DEFAULT_DELAY_MS = 1000;
 const DEFAULT_MAX_RETRIES = 3;
 const DEFAULT_CONCURRENCY = 1;
@@ -54,6 +56,7 @@ export function getEmbeddingQueueSettings(env: Env): EmbeddingQueueSettings {
   return {
     enabled: parseBoolean(env.EMBEDDINGS_QUEUE_ENABLED, isQueueEnabledByDefault),
     batchSize: parsePositiveInt(env.EMBEDDINGS_QUEUE_BATCH_SIZE, DEFAULT_BATCH_SIZE),
+    maxBatchTokens: parsePositiveInt(env.EMBEDDINGS_QUEUE_MAX_BATCH_TOKENS, DEFAULT_MAX_BATCH_TOKENS),
     delayMs: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_DELAY_MS, DEFAULT_DELAY_MS),
     maxRetries: parseNonNegativeInt(env.EMBEDDINGS_QUEUE_MAX_RETRIES, DEFAULT_MAX_RETRIES),
     concurrency: parsePositiveInt(env.EMBEDDINGS_QUEUE_CONCURRENCY, DEFAULT_CONCURRENCY),

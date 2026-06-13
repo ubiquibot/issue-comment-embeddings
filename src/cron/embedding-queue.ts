@@ -38,9 +38,16 @@ type PendingRow = {
   doc_type: DocumentType;
 };
 
+type PreparedRow = {
+  row: PendingRow;
+  embeddingSource: string;
+  estimatedTokens: number;
+};
+
 type JsonRecord = Record<string, unknown>;
 
 const MAX_RATE_LIMIT_DELAY_MS = 60_000;
+const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 3;
 
 function isRateLimitError(error: unknown): boolean {
   if (error && typeof error === "object") {
@@ -64,6 +71,27 @@ function isRateLimitError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : String(error ?? "");
   return message.toLowerCase().includes("rate limit") || message.toLowerCase().includes("rate_limit");
+}
+
+function isTokenLimitError(error: unknown): boolean {
+  const statusCode =
+    getNestedNumber(error, ["statusCode"]) ??
+    getNestedNumber(error, ["status"]) ??
+    getNestedNumber(error, ["httpStatus"]) ??
+    getNestedNumber(error, ["response", "status"]);
+  const body = error && typeof error === "object" ? (error as JsonRecord).body : null;
+  const message = [
+    error instanceof Error ? error.message : String(error ?? ""),
+    getNestedString(body, ["error", "message"]),
+    getNestedString(body, ["message"]),
+    getNestedString(body, ["error", "type"]),
+    getNestedString(body, ["error", "code"]),
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return statusCode === 400 && (message.includes("token") || message.includes("context") || message.includes("too many") || message.includes("maximum"));
 }
 
 function getNestedString(value: unknown, path: string[]): string | null {
@@ -139,6 +167,33 @@ function getAuthorType(payload: unknown, docType: DocumentType): string | null {
   return getNestedString(payload, ["comment", "user", "type"]) ?? getNestedString(payload, ["sender", "type"]);
 }
 
+function estimateEmbeddingTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / TOKEN_ESTIMATE_CHARS_PER_TOKEN));
+}
+
+function splitPreparedRowsByTokenBudget(prepared: PreparedRow[], maxBatchTokens: number): PreparedRow[][] {
+  const batches: PreparedRow[][] = [];
+  let currentBatch: PreparedRow[] = [];
+  let currentTokens = 0;
+
+  for (const entry of prepared) {
+    const shouldStartNewBatch = currentBatch.length > 0 && currentTokens + entry.estimatedTokens > maxBatchTokens;
+    if (shouldStartNewBatch) {
+      batches.push(currentBatch);
+      currentBatch = [];
+      currentTokens = 0;
+    }
+    currentBatch.push(entry);
+    currentTokens += entry.estimatedTokens;
+  }
+
+  if (currentBatch.length > 0) {
+    batches.push(currentBatch);
+  }
+
+  return batches;
+}
+
 async function createEmbeddingsWithRetry(
   embedder: VoyageEmbedding,
   texts: string[],
@@ -166,12 +221,73 @@ async function createEmbeddingsWithRetry(
   return null;
 }
 
+async function createEmbeddingsForPreparedRows(params: {
+  entries: PreparedRow[];
+  embedder: VoyageEmbedding;
+  settings: ReturnType<typeof getEmbeddingQueueSettings>;
+  logger: QueueLogger;
+  label: QueueLabel;
+  splitDepth?: number;
+}): Promise<number[][] | null> {
+  const { entries, embedder, settings, logger, label, splitDepth = 0 } = params;
+  try {
+    return await createEmbeddingsWithRetry(
+      embedder,
+      entries.map((entry) => entry.embeddingSource),
+      settings.maxRetries,
+      settings.delayMs,
+      logger
+    );
+  } catch (error) {
+    if (!isTokenLimitError(error) || entries.length === 1) {
+      throw error;
+    }
+
+    const midpoint = Math.ceil(entries.length / 2);
+    const leftEntries = entries.slice(0, midpoint);
+    const rightEntries = entries.slice(midpoint);
+    logger.warn("Voyage token limit hit; splitting embedding batch.", {
+      label,
+      rows: entries.length,
+      leftRows: leftEntries.length,
+      rightRows: rightEntries.length,
+      splitDepth,
+    });
+
+    const leftEmbeddings = await createEmbeddingsForPreparedRows({
+      entries: leftEntries,
+      embedder,
+      settings,
+      logger,
+      label,
+      splitDepth: splitDepth + 1,
+    });
+    if (!leftEmbeddings) {
+      return null;
+    }
+
+    const rightEmbeddings = await createEmbeddingsForPreparedRows({
+      entries: rightEntries,
+      embedder,
+      settings,
+      logger,
+      label,
+      splitDepth: splitDepth + 1,
+    });
+    if (!rightEmbeddings) {
+      return null;
+    }
+
+    return [...leftEmbeddings, ...rightEmbeddings];
+  }
+}
+
 async function preparePendingRow(params: {
   row: PendingRow;
   label: QueueLabel;
   supabase: SupabaseClient<Database>;
   logger: QueueLogger;
-}): Promise<{ row: PendingRow; embeddingSource: string } | null> {
+}): Promise<PreparedRow | null> {
   const { row, label, supabase, logger } = params;
   const docType = row.doc_type as DocumentType;
   const authorType = getAuthorType(row.payload, docType);
@@ -216,7 +332,7 @@ async function preparePendingRow(params: {
     return null;
   }
 
-  return { row, embeddingSource: cleaned };
+  return { row, embeddingSource: cleaned, estimatedTokens: estimateEmbeddingTokens(cleaned) };
 }
 
 async function processPendingRows(params: {
@@ -255,7 +371,7 @@ async function processPendingRows(params: {
   }
 
   const rows = (data as PendingRow[]).slice();
-  const prepared: Array<{ row: PendingRow; embeddingSource: string }> = [];
+  const prepared: PreparedRow[] = [];
 
   for (const row of rows) {
     const result = await preparePendingRow({ row, label, supabase, logger });
@@ -268,11 +384,25 @@ async function processPendingRows(params: {
     return { processed: 0, stoppedEarly: false, processedByType };
   }
 
-  const embeddingSources = prepared.map((entry) => entry.embeddingSource);
-  const embeddings = await createEmbeddingsWithRetry(embedder, embeddingSources, settings.maxRetries, settings.delayMs, logger);
-  if (!embeddings) {
-    return { processed: 0, stoppedEarly: true, processedByType };
+  const tokenBatches = splitPreparedRowsByTokenBudget(prepared, settings.maxBatchTokens);
+  if (tokenBatches.length > 1) {
+    logger.info("Splitting embedding queue batch by token budget.", {
+      label,
+      rows: prepared.length,
+      batches: tokenBatches.length,
+      maxBatchTokens: settings.maxBatchTokens,
+    });
   }
+
+  const embeddings: number[][] = [];
+  for (const entries of tokenBatches) {
+    const batchEmbeddings = await createEmbeddingsForPreparedRows({ entries, embedder, settings, logger, label });
+    if (!batchEmbeddings) {
+      return { processed: 0, stoppedEarly: true, processedByType };
+    }
+    embeddings.push(...batchEmbeddings);
+  }
+
   if (embeddings.length !== prepared.length) {
     logger.error("Embedding batch response size mismatch.", {
       label,

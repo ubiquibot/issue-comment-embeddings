@@ -151,4 +151,106 @@ describe("processPendingEmbeddings", () => {
     expect(result.commentsProcessed).toBe(1);
     expect(updates.length).toBe(1);
   });
+
+  it("splits mixed-length queue rows by the configured token budget", async () => {
+    const env = {
+      EMBEDDINGS_QUEUE_ENABLED: "true",
+      EMBEDDINGS_QUEUE_DELAY_MS: "0",
+      EMBEDDINGS_QUEUE_BATCH_SIZE: "3",
+      EMBEDDINGS_QUEUE_MAX_BATCH_TOKENS: "50",
+    } as Env;
+    const rows: QueueRow[] = [
+      {
+        id: "issue-1",
+        markdown: "a".repeat(120),
+        modified_at: new Date().toISOString(),
+        payload: { issue: { user: { type: "User" } } },
+        doc_type: "issue",
+      },
+      {
+        id: "issue-2",
+        markdown: "b".repeat(60),
+        modified_at: new Date().toISOString(),
+        payload: { issue: { user: { type: "User" } } },
+        doc_type: "issue",
+      },
+      {
+        id: "issue-3",
+        markdown: "c".repeat(120),
+        modified_at: new Date().toISOString(),
+        payload: { issue: { user: { type: "User" } } },
+        doc_type: "issue",
+      },
+    ];
+    const { client, updates } = createMockSupabase([rows]);
+    const embedInputs: string[][] = [];
+    const voyage = {
+      embed: mock(async ({ input }: { input: string[] }) => {
+        embedInputs.push([...input]);
+        return { data: input.map((text) => ({ embedding: [text.length] })) };
+      }),
+    };
+
+    const result = await processPendingEmbeddings({
+      env,
+      clients: { supabase: client, voyage: voyage as never },
+      logger: createLogger(),
+    });
+
+    expect(result.issuesProcessed).toBe(3);
+    expect(result.stoppedEarly).toBe(false);
+    expect(embedInputs.map((input) => input.length)).toEqual([1, 1, 1]);
+    expect(updates.length).toBe(3);
+  });
+
+  it("shrinks a Voyage request when the provider reports a token-limit error", async () => {
+    const env = {
+      EMBEDDINGS_QUEUE_ENABLED: "true",
+      EMBEDDINGS_QUEUE_DELAY_MS: "0",
+      EMBEDDINGS_QUEUE_BATCH_SIZE: "2",
+      EMBEDDINGS_QUEUE_MAX_BATCH_TOKENS: "1000",
+    } as Env;
+    const rows: QueueRow[] = [
+      {
+        id: "issue-1",
+        markdown: "a".repeat(80),
+        modified_at: new Date().toISOString(),
+        payload: { issue: { user: { type: "User" } } },
+        doc_type: "issue",
+      },
+      {
+        id: "issue-2",
+        markdown: "b".repeat(80),
+        modified_at: new Date().toISOString(),
+        payload: { issue: { user: { type: "User" } } },
+        doc_type: "issue",
+      },
+    ];
+    const { client, updates } = createMockSupabase([rows]);
+    const embedInputs: string[][] = [];
+    const tokenLimitError = Object.assign(new Error("too many tokens for request"), {
+      statusCode: 400,
+      body: { error: { message: "maximum token limit exceeded" } },
+    });
+    const voyage = {
+      embed: mock(async ({ input }: { input: string[] }) => {
+        embedInputs.push([...input]);
+        if (input.length > 1) {
+          throw tokenLimitError;
+        }
+        return { data: input.map((text) => ({ embedding: [text.length] })) };
+      }),
+    };
+
+    const result = await processPendingEmbeddings({
+      env,
+      clients: { supabase: client, voyage: voyage as never },
+      logger: createLogger(),
+    });
+
+    expect(result.issuesProcessed).toBe(2);
+    expect(result.stoppedEarly).toBe(false);
+    expect(embedInputs.map((input) => input.length)).toEqual([2, 1, 1]);
+    expect(updates.length).toBe(2);
+  });
 });

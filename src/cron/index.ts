@@ -39,7 +39,7 @@ async function main() {
     } catch (error) {
       logger.error("Embedding queue failed", { error: normalizeError(error) });
       if (queueSettings.enabled) {
-        return;
+        throw error;
       }
     }
 
