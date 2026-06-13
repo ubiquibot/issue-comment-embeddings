@@ -259,6 +259,7 @@ describe("Plugin tests", () => {
       );
     });
 
+    context2.octokit.rest.issues.createComment = mock(async () => {}) as unknown as typeof octokit.rest.issues.createComment;
     context2.octokit.rest.issues.update = mock(
       async (params: { owner: string; repo: string; issue_number: number; body?: string; state?: string; state_reason?: string }) => {
         const updatedBody = `${matchThresholdIssue2.issue_body}\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n> - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n`;
@@ -277,8 +278,14 @@ describe("Plugin tests", () => {
 
     await runPlugin(context2);
     const issue = db.issue.findFirst({ where: { number: { equals: 4 } } }) as unknown as Context["payload"]["issue"];
+    expect(context2.octokit.rest.issues.createComment).toHaveBeenCalledWith({
+      owner: STRINGS.USER_1,
+      repo: STRINGS.TEST_REPO,
+      issue_number: 4,
+      body: "Duplicate of #3",
+    });
     expect(issue.state).toBe("closed");
-    expect(issue.state_reason).toBe("not_planned");
+    expect(issue.state_reason).toBe("duplicate");
     expect(issue.body).toContain(">[!CAUTION]");
     expect(issue.body).toContain("This issue may be a duplicate of the following issues:");
     expect(issue.body).toContain(`- [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);

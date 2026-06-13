@@ -79,10 +79,13 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "duplicate";
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
+      }
+      if (shouldClose) {
+        await createDuplicateMarkerComment(context, matchIssues[0].node.number);
       }
       await octokit.rest.issues.update({
         owner: payload.repository.owner.login,
@@ -90,7 +93,7 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
         issue_number: originalIssue.number,
         body: nextBody,
         state: "closed",
-        state_reason: "not_planned",
+        state_reason: "duplicate",
       });
       return;
     }
@@ -121,6 +124,15 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
 
 function matchRepoOrgToSimilarIssueRepoOrg(repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
   return repoOrg === similarIssueRepoOrg && repoName === similarIssueRepoName;
+}
+
+async function createDuplicateMarkerComment(context: Context<"issues.opened" | "issues.edited">, duplicateIssueNumber: number) {
+  await context.octokit.rest.issues.createComment({
+    owner: context.payload.repository.owner.login,
+    repo: context.payload.repository.name,
+    issue_number: context.payload.issue.number,
+    body: `Duplicate of #${duplicateIssueNumber}`,
+  });
 }
 
 function splitIntoSentences(text: string): string[] {
