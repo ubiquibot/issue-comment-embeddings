@@ -329,6 +329,66 @@ describe("Plugin tests", () => {
     expect(comments[0].body).toContain("98% Match");
   });
 
+  it("When issue matching is triggered, it should rank same-repository matches above global matches after context adjustment", async () => {
+    const [taskCompleteIssue] = fetchSimilarIssues("task_complete");
+    const { context } = createContextIssues(taskCompleteIssue.issue_body, "context_match", 16, taskCompleteIssue.title);
+    context.eventName = ISSUES_EDITED_EVENT_NAME;
+
+    context.adapters.supabase.issue.createIssue = mock(async () => {
+      createIssue(
+        taskCompleteIssue.issue_body,
+        "context_match",
+        taskCompleteIssue.title,
+        16,
+        { login: "test", id: 1 },
+        "open",
+        null,
+        STRINGS.TEST_REPO,
+        STRINGS.USER_1
+      );
+    });
+
+    context.adapters.supabase.issue.findSimilarIssuesToMatch = mock().mockResolvedValue([
+      { issue_id: "same-repo", similarity: 0.8 },
+      { issue_id: "global-repo", similarity: 0.98 },
+    ] as unknown as IssueSimilaritySearchResult[]);
+
+    context.octokit.graphql = mock(async (query: string, variables: { issueNodeId: string }) => ({
+      node:
+        query && variables.issueNodeId === "same-repo"
+          ? {
+              title: "Same repo issue",
+              url: "https://github.com/ubiquity/test-repo/issues/20",
+              state: "closed",
+              stateReason: "COMPLETED",
+              closed: true,
+              repository: { owner: { login: STRINGS.USER_1 }, name: STRINGS.TEST_REPO },
+              assignees: { nodes: [{ login: "sameRepoContributor", url: "https://github.com/sameRepoContributor" }] },
+            }
+          : {
+              title: "Global issue",
+              url: "https://github.com/elsewhere/other-repo/issues/21",
+              state: "closed",
+              stateReason: "COMPLETED",
+              closed: true,
+              repository: { owner: { login: "elsewhere" }, name: "other-repo" },
+              assignees: { nodes: [{ login: "globalContributor", url: "https://github.com/globalContributor" }] },
+            },
+    })) as unknown as typeof context.octokit.graphql;
+
+    context.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      createComment(params.body, 16, "context_match", params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
+    await runPlugin(context);
+
+    const comments = db.issueComments.findMany({ where: { node_id: { equals: "context_match" } } });
+    expect(comments.length).toBe(1);
+    expect(comments[0].body.indexOf("sameRepoContributor")).toBeLessThan(comments[0].body.indexOf("globalContributor"));
+    expect(comments[0].body).toContain("80% Match");
+    expect(comments[0].body).toContain("49% Match");
+  });
+
   it("When issue matching is triggered with alwaysRecommend enabled, it should suggest contributors regardless of similarity", async () => {
     const [taskCompleteIssue] = fetchSimilarIssues("task_complete");
     const { context } = createContextIssues(taskCompleteIssue.issue_body, "task_complete_always", 6, taskCompleteIssue.title);

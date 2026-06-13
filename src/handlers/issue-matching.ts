@@ -35,6 +35,30 @@ function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResp
   return response.node !== null;
 }
 
+function getContextSimilarityMultiplier(currentOwner: string, currentRepo: string, matchedOwner: string, matchedRepo: string) {
+  if (currentOwner === matchedOwner && currentRepo === matchedRepo) {
+    return 1;
+  }
+  if (currentOwner === matchedOwner) {
+    return 0.75;
+  }
+  return 0.5;
+}
+
+export function getContextAdjustedSimilarity(
+  similarity: number,
+  currentRepository: { owner: string; name: string },
+  matchedRepository: { owner: string; name: string }
+) {
+  const multiplier = getContextSimilarityMultiplier(
+    currentRepository.owner,
+    currentRepository.name,
+    matchedRepository.owner,
+    matchedRepository.name
+  );
+  return similarity * multiplier;
+}
+
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
   const { logger, octokit, payload } = context;
   const issue = payload.issue;
@@ -219,7 +243,12 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
           if (options.allowedLogins && !options.allowedLogins.has(assignee.login)) {
             return;
           }
-          const similarityPercentage = Math.round(issue.similarity * 100);
+          const adjustedSimilarity = getContextAdjustedSimilarity(
+            issue.similarity,
+            { owner: payload.repository.owner.login, name: payload.repository.name },
+            { owner: issue.node.repository.owner.login, name: issue.node.repository.name }
+          );
+          const similarityPercentage = Math.round(adjustedSimilarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
