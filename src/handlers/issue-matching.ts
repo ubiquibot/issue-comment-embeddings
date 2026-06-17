@@ -31,14 +31,16 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+const ISSUE_MATCHING_COMMENT_MARKER = "<!-- text-vector-embeddings:issue-matching -->";
+const ISSUE_MATCHING_COMMENT_START = ">The following contributors may be suitable for this task:";
+const ISSUE_MATCHING_COMMENT_HEADER = `>[!NOTE]\n${ISSUE_MATCHING_COMMENT_START}`;
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
 }
 
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
   const { logger, octokit, payload } = context;
-  const issue = payload.issue;
-  const commentStart = ">The following contributors may be suitable for this task:";
 
   const result = await issueMatching(context);
 
@@ -48,15 +50,7 @@ export async function issueMatchingWithComment(context: Context<"issues.opened" 
 
   const { matchResultArray, sortedContributors } = result;
 
-  // Fetch if any previous comment exists
-  const listIssues = (await octokit.paginate(octokit.rest.issues.listComments, {
-    owner: payload.repository.owner.login,
-    repo: payload.repository.name,
-    issue_number: issue.number,
-  })) as IssueCommentSummary[];
-
-  //Check if the comment already exists
-  const existingComment = listIssues.find((comment) => comment.body && comment.body.includes(">[!NOTE]" + "\n" + commentStart));
+  const existingComment = await findIssueMatchingComment(context);
 
   if (matchResultArray.size === 0) {
     if (existingComment) {
@@ -79,6 +73,7 @@ export async function issueMatchingWithComment(context: Context<"issues.opened" 
 
   logger.debug("Comment to be added", { comment });
 
+  let activeComment = existingComment;
   if (existingComment) {
     await context.octokit.rest.issues.updateComment({
       owner: payload.repository.owner.login,
@@ -87,13 +82,73 @@ export async function issueMatchingWithComment(context: Context<"issues.opened" 
       body: comment,
     });
   } else {
-    await context.octokit.rest.issues.createComment({
+    const response = await context.octokit.rest.issues.createComment({
       owner: payload.repository.owner.login,
       repo: payload.repository.name,
       issue_number: payload.issue.number,
       body: comment,
     });
+    activeComment = response?.data ? { id: response.data.id, body: response.data.body } : null;
   }
+  await consolidateIssueMatchingComments(context, comment, activeComment);
+}
+
+async function listIssueMatchingComments(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">): Promise<IssueCommentSummary[]> {
+  const { octokit, payload } = context;
+  const comments = (await octokit.paginate(octokit.rest.issues.listComments, {
+    owner: payload.repository.owner.login,
+    repo: payload.repository.name,
+    issue_number: payload.issue.number,
+  })) as IssueCommentSummary[];
+
+  return comments.filter(isIssueMatchingComment).sort((a, b) => a.id - b.id);
+}
+
+async function findIssueMatchingComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">): Promise<IssueCommentSummary | null> {
+  const [primaryComment, ...duplicateComments] = await listIssueMatchingComments(context);
+  await deleteIssueMatchingComments(context, duplicateComments);
+  return primaryComment ?? null;
+}
+
+async function consolidateIssueMatchingComments(
+  context: Context<"issues.opened" | "issues.edited" | "issues.labeled">,
+  body: string,
+  fallbackComment: IssueCommentSummary | null
+) {
+  const matchingComments = await listIssueMatchingComments(context);
+  const comments =
+    fallbackComment && !matchingComments.some((comment) => comment.id === fallbackComment.id) ? [...matchingComments, fallbackComment] : matchingComments;
+  const [primaryComment, ...duplicateComments] = comments.sort((a, b) => a.id - b.id);
+
+  if (!primaryComment) {
+    return;
+  }
+
+  if (primaryComment.body !== body) {
+    await context.octokit.rest.issues.updateComment({
+      owner: context.payload.repository.owner.login,
+      repo: context.payload.repository.name,
+      comment_id: primaryComment.id,
+      body,
+    });
+  }
+
+  await deleteIssueMatchingComments(context, duplicateComments);
+}
+
+async function deleteIssueMatchingComments(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">, comments: IssueCommentSummary[]) {
+  for (const comment of comments) {
+    await context.octokit.rest.issues.deleteComment({
+      owner: context.payload.repository.owner.login,
+      repo: context.payload.repository.name,
+      comment_id: comment.id,
+    });
+  }
+}
+
+function isIssueMatchingComment(comment: IssueCommentSummary) {
+  const body = (comment.body ?? "").replace(/\r\n/g, "\n");
+  return body.includes(ISSUE_MATCHING_COMMENT_MARKER) || body.includes(ISSUE_MATCHING_COMMENT_HEADER);
 }
 
 type IssueMatchingEvents = "issues.opened" | "issues.edited" | "issues.labeled" | "issue_comment.created";
@@ -286,7 +341,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
  * @returns The comment to be added to the issue
  */
 function commentBuilder(matchResultArray: Map<string, Array<string>>): string {
-  const commentLines: string[] = [">[!NOTE]", ">The following contributors may be suitable for this task:"];
+  const commentLines: string[] = [ISSUE_MATCHING_COMMENT_MARKER, ">[!NOTE]", ISSUE_MATCHING_COMMENT_START];
   matchResultArray.forEach((issues: Array<string>, assignee: string) => {
     commentLines.push(`>### [${assignee}](https://www.github.com/${assignee})`);
     issues.forEach((issue: string) => {
