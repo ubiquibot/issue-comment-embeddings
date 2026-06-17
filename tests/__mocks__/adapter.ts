@@ -7,6 +7,7 @@ import { stripHtmlComments } from "../../src/utils/markdown-comments";
 
 export interface CommentMock {
   id: string;
+  markdown: string | null;
   author_id: number;
   payload?: Record<string, unknown> | null;
   type?: string;
@@ -36,12 +37,15 @@ export function createMockAdapters(context: Context) {
             throw new Error("Comment already exists");
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
+          const shouldRedactComment = commentData.isPrivate && context.config.redactPrivateRepoComments;
+          const embeddingSource = shouldRedactComment ? "" : cleanedMarkdown;
           const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
           commentMap.set(commentData.id, {
             id: commentData.id,
+            markdown: shouldRedactComment ? null : commentData.markdown,
             author_id: commentData.author_id,
             embedding,
+            payload: shouldRedactComment ? null : commentData.payload,
             issue_id: commentData.issue_id,
           });
           console.log("Comment created", commentData.id, commentMap.get(commentData.id));
@@ -52,13 +56,15 @@ export function createMockAdapters(context: Context) {
             throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
+          const shouldRedactComment = commentData.isPrivate && context.config.redactPrivateRepoComments;
+          const embeddingSource = shouldRedactComment ? "" : cleanedMarkdown;
           const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
           commentMap.set(commentData.id, {
             id: commentData.id,
+            markdown: shouldRedactComment ? null : commentData.markdown,
             author_id: commentData.author_id,
             embedding,
-            payload: commentData.payload,
+            payload: shouldRedactComment ? null : commentData.payload,
             issue_id: commentData.issue_id,
           });
         }),

@@ -579,6 +579,32 @@ describe("Plugin tests", () => {
     expect(comment.embedding).toBeDefined();
   });
 
+  it("When a private repository comment is created, it should store comment content by default", async () => {
+    const commentBody = "Private repository comment body that should be stored by default.";
+    const { context } = createContext(commentBody, 1, 1, 1, "privateDefaultComment", DEFAULT_ISSUE_ID);
+    context.payload.repository.private = true;
+
+    await runPlugin(context);
+
+    const comment = (await context.adapters.supabase.comment.getComment("privateDefaultComment")) as unknown as CommentMock;
+    expect(comment.markdown).toBe(commentBody);
+    expect(comment.embedding[0]).toBe(1);
+  });
+
+  it("When redactPrivateRepoComments is enabled, it should redact private repository comment content", async () => {
+    const commentBody = "Private repository comment body that should be redacted when configured.";
+    const { context } = createContext(commentBody, 1, 1, 1, "privateRedactedComment", DEFAULT_ISSUE_ID);
+    context.payload.repository.private = true;
+    context.config.redactPrivateRepoComments = true;
+
+    await runPlugin(context);
+
+    const comment = (await context.adapters.supabase.comment.getComment("privateRedactedComment")) as unknown as CommentMock;
+    expect(comment.markdown).toBeNull();
+    expect(comment.payload).toBeNull();
+    expect(comment.embedding[0]).toBe(0);
+  });
+
   it("When a user uses annotate command with a specified comment and 'repo' scope and the comment doesn't have similarity above match threshold with any issue from the same repository, it shouldn't update comment body with footnotes", async () => {
     const [annotateIssue] = fetchSimilarIssues("annotate");
     const { context } = createContextIssues(annotateIssue.issue_body, "annotate", 9, annotateIssue.title);
@@ -701,6 +727,7 @@ describe("Plugin tests", () => {
         dedupeMatchThreshold: 0.95,
         jobMatchingThreshold: 0.95,
         annotateThreshold: 0.65,
+        redactPrivateRepoComments: false,
         demoFlag: false,
       },
       command: null,

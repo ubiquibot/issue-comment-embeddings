@@ -50,6 +50,7 @@ export class Comment extends SuperSupabase {
   async createComment(commentData: CommentData, options: CommentWriteOptions = {}) {
     const { isPrivate } = commentData;
     const { deferEmbedding: shouldDeferEmbedding = false } = options;
+    const shouldRedactComment = isPrivate && this.context.config.redactPrivateRepoComments;
     const docType = commentData.docType ?? "issue_comment";
     const cleanedMarkdown = cleanMarkdown(commentData.markdown);
     const isCommandComment = cleanedMarkdown ? isCommandLikeContent(cleanedMarkdown) : false;
@@ -77,13 +78,13 @@ export class Comment extends SuperSupabase {
     }
     //Create the embedding for this comment
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !shouldRedactComment) {
       embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (shouldRedactComment) {
       finalMarkdown = null;
       finalPayload = null;
     }
@@ -111,6 +112,7 @@ export class Comment extends SuperSupabase {
   async updateComment(commentData: CommentData, options: CommentWriteOptions = {}) {
     const { isPrivate } = commentData;
     const { deferEmbedding: shouldDeferEmbedding = false } = options;
+    const shouldRedactComment = isPrivate && this.context.config.redactPrivateRepoComments;
     const docType = commentData.docType ?? "issue_comment";
     const cleanedMarkdown = cleanMarkdown(commentData.markdown);
     const isCommandComment = cleanedMarkdown ? isCommandLikeContent(cleanedMarkdown) : false;
@@ -119,13 +121,13 @@ export class Comment extends SuperSupabase {
     const embeddingSource = shouldSkipEmbedding ? null : cleanedMarkdown;
     //Create the embedding for this comment
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !shouldRedactComment) {
       embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (shouldRedactComment) {
       finalMarkdown = null;
       finalPayload = null;
     }
