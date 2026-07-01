@@ -528,6 +528,21 @@ describe("Plugin tests", () => {
     expect(updatedComment.body).toContain(`[^01^]: 88% similar to issue: [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
   });
 
+  it("When a user annotates a comment outside the current repository, it should return a clear error", async () => {
+    const { context } = createContext("/annotate https://github.com/outside-org/outside-repo/issues/1#issuecomment-1 repo", 1, 1, 2, "outsideAnnotate", "1");
+    const getComment = mock(async () => {
+      throw new Error("Should not fetch outside comments");
+    });
+    context.octokit.rest.issues.getComment = getComment as unknown as typeof octokit.rest.issues.getComment;
+
+    await expect(runPlugin(context)).rejects.toMatchObject({
+      logMessage: {
+        raw: "Cannot annotate comments outside ubiquity/test-repo. The GitHub App installation may not have permission to read or update that comment.",
+      },
+    });
+    expect(getComment).not.toHaveBeenCalled();
+  });
+
   it("When demoFlag is true, it should skip storing issues in the database", async () => {
     const { context } = createContextIssues(DEFAULT_BODY, "demoIssue", 10, "Demo Test Issue");
 
