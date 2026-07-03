@@ -10,6 +10,7 @@ import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
   node: {
+    databaseId: number;
     title: string;
     number: number;
     url: string;
@@ -74,12 +75,13 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     const matchIssues = processedIssues.filter((issue) => parseFloat(issue.similarity) / 100 >= context.config.dedupeMatchThreshold);
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.dedupeMatchThreshold} already exists`, { matchIssues });
+      const duplicateIssue = matchIssues.reduce((best, issue) => (parseFloat(issue.similarity) > parseFloat(best.similarity) ? issue : best));
       //To the issue body, add a footnote with the link to the similar issue
       const updatedBody = await handleMatchIssuesComment(context, payload, cleanedIssueBody, processedIssues);
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed";
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
@@ -89,8 +91,11 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
         repo: payload.repository.name,
         issue_number: originalIssue.number,
         body: nextBody,
-        state: "closed",
-        state_reason: "not_planned",
+        ...(shouldClose && {
+          state: "closed",
+          state_reason: "duplicate",
+          duplicate_issue_id: duplicateIssue.node.databaseId,
+        }),
       });
       return;
     }
@@ -290,6 +295,7 @@ export async function processSimilarIssues(similarIssues: IssueSimilaritySearchR
             query ($issueNodeId: ID!) {
               node(id: $issueNodeId) {
                 ... on Issue {
+                  databaseId
                   title
                   url
                   number

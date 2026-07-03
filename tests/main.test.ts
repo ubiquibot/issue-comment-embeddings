@@ -203,7 +203,7 @@ describe("Plugin tests", () => {
     }
   );
 
-  it("When an issue is created with similarity above match threshold, it should close the issue and add a caution alert", async () => {
+  it("When an issue is created with similarity above match threshold, it should close the issue as a duplicate and add a caution alert", async () => {
     const [matchThresholdIssue1, matchThresholdIssue2] = fetchSimilarIssues("match_threshold_95");
     const { context } = createContextIssues(matchThresholdIssue1.issue_body, "match1", 3, matchThresholdIssue1.title);
     context.eventName = ISSUES_EDITED_EVENT_NAME;
@@ -231,6 +231,7 @@ describe("Plugin tests", () => {
     ] as unknown as IssueSimilaritySearchResult[]);
     context2.octokit.graphql = mock().mockResolvedValue({
       node: {
+        databaseId: 9001,
         title: STRINGS.SIMILAR_ISSUE,
         url: STRINGS.ISSUE_URL,
         number: 3,
@@ -259,8 +260,18 @@ describe("Plugin tests", () => {
       );
     });
 
+    let updateParams: { owner: string; repo: string; issue_number: number; body?: string; state?: string; state_reason?: string; duplicate_issue_id?: number };
     context2.octokit.rest.issues.update = mock(
-      async (params: { owner: string; repo: string; issue_number: number; body?: string; state?: string; state_reason?: string }) => {
+      async (params: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        body?: string;
+        state?: string;
+        state_reason?: string;
+        duplicate_issue_id?: number;
+      }) => {
+        updateParams = params;
         const updatedBody = `${matchThresholdIssue2.issue_body}\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n> - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n`;
         db.issue.update({
           where: {
@@ -278,10 +289,59 @@ describe("Plugin tests", () => {
     await runPlugin(context2);
     const issue = db.issue.findFirst({ where: { number: { equals: 4 } } }) as unknown as Context["payload"]["issue"];
     expect(issue.state).toBe("closed");
-    expect(issue.state_reason).toBe("not_planned");
+    expect(issue.state_reason).toBe("duplicate");
+    expect(updateParams).toBeDefined();
+    expect(updateParams?.duplicate_issue_id).toBe(9001);
     expect(issue.body).toContain(">[!CAUTION]");
     expect(issue.body).toContain("This issue may be a duplicate of the following issues:");
     expect(issue.body).toContain(`- [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
+  });
+
+  it("When an already closed issue has a duplicate alert, it should not try to reclassify the closure", async () => {
+    const [matchThresholdIssue1, matchThresholdIssue2] = fetchSimilarIssues("match_threshold_95");
+    const existingBody = `${matchThresholdIssue2.issue_body}\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n> - [${STRINGS.SIMILAR_ISSUE}](https://www.github.com/ubiquity/test-repo/issues/3#3#3)\n`;
+    const { context } = createContextIssues(
+      existingBody,
+      "closed-match",
+      4,
+      matchThresholdIssue2.title,
+      { login: "test", id: 1 },
+      "closed",
+      "not_planned",
+      ISSUES_EDITED_EVENT_NAME
+    );
+
+    context.adapters.supabase.issue.findSimilarIssues = mock().mockResolvedValue([
+      { issue_id: "match1", similarity: 0.96 },
+    ] as unknown as IssueSimilaritySearchResult[]);
+    context.octokit.graphql = mock().mockResolvedValue({
+      node: {
+        databaseId: 9001,
+        title: STRINGS.SIMILAR_ISSUE,
+        url: STRINGS.ISSUE_URL,
+        number: 3,
+        body: matchThresholdIssue1.issue_body,
+        repository: {
+          name: STRINGS.TEST_REPO,
+          owner: {
+            login: STRINGS.USER_1,
+          },
+        },
+      },
+    }) as unknown as typeof context.octokit.graphql;
+    let updateParams: { state?: string; state_reason?: string; duplicate_issue_id?: number };
+    const updateMock = mock(async (params: { state?: string; state_reason?: string; duplicate_issue_id?: number }) => {
+      updateParams = params;
+    });
+    context.octokit.rest.issues.update = updateMock as unknown as typeof octokit.rest.issues.update;
+
+    await runPlugin(context);
+
+    expect(updateMock).toHaveBeenCalledTimes(1);
+    expect(updateParams).toBeDefined();
+    expect(updateParams?.state).toBeUndefined();
+    expect(updateParams?.state_reason).toBeUndefined();
+    expect(updateParams?.duplicate_issue_id).toBeUndefined();
   });
 
   it("When issue matching is triggered, it should suggest contributors based on similarity", async () => {
