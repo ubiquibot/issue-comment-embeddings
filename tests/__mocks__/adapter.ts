@@ -4,6 +4,7 @@ import { STRINGS } from "./strings";
 import { jest } from "@jest/globals";
 import { IssueData } from "../../src/adapters/supabase/helpers/issues";
 import { stripHtmlComments } from "../../src/utils/markdown-comments";
+import { shouldRedactPrivateRepoContent } from "../../src/utils/private-redaction";
 
 export interface CommentMock {
   id: string;
@@ -11,7 +12,7 @@ export interface CommentMock {
   payload?: Record<string, unknown> | null;
   type?: string;
   issue_id?: string;
-  embedding: number[];
+  embedding: number[] | null;
 }
 
 export interface IssueMock {
@@ -20,7 +21,7 @@ export interface IssueMock {
   author_id: number;
   payload?: Record<string, unknown> | null;
   isPrivate?: boolean;
-  embedding: number[];
+  embedding: number[] | null;
 }
 
 export function createMockAdapters(context: Context) {
@@ -36,12 +37,13 @@ export function createMockAdapters(context: Context) {
             throw new Error("Comment already exists");
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
-          const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+          const shouldRedact = shouldRedactPrivateRepoContent(commentData.isPrivate, context.config);
+          const embedding = shouldRedact ? null : await context.adapters.voyage.embedding.createEmbedding(cleanedMarkdown);
           commentMap.set(commentData.id, {
             id: commentData.id,
             author_id: commentData.author_id,
             embedding,
+            payload: shouldRedact ? null : commentData.payload,
             issue_id: commentData.issue_id,
           });
           console.log("Comment created", commentData.id, commentMap.get(commentData.id));
@@ -52,13 +54,13 @@ export function createMockAdapters(context: Context) {
             throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
-          const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+          const shouldRedact = shouldRedactPrivateRepoContent(commentData.isPrivate, context.config);
+          const embedding = shouldRedact ? null : await context.adapters.voyage.embedding.createEmbedding(cleanedMarkdown);
           commentMap.set(commentData.id, {
             id: commentData.id,
             author_id: commentData.author_id,
             embedding,
-            payload: commentData.payload,
+            payload: shouldRedact ? null : commentData.payload,
             issue_id: commentData.issue_id,
           });
         }),

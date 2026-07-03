@@ -39,6 +39,7 @@ Deployment notes:
     dedupeWarningThreshold: 0.75
     annotateThreshold: 0.65
     jobMatchingThreshold: 0.75
+    redactPrivateRepoComments: false
 ```
 
 ## Recommendations
@@ -169,21 +170,19 @@ This allows the system to:
 - Find related issues based on content similarity
 - Maintain a clean issue tracker by preventing redundancy
 
-#### 2. Secure Storage for Private Issues
+#### 2. Configurable Storage for Private Issues
 
-The system implements privacy-conscious storage of issue data:
+The system captures private repository content by default. Set `redactPrivateRepoComments` to `true` to redact private issue and comment content before storage:
 
 ```typescript
-if (isPrivate) {
+if (isPrivate && config.redactPrivateRepoComments) {
   finalMarkdown = null;
   finalPayload = null;
-  plaintext = null;
 }
 
-const { data, error } = await this.supabase.from("issues").insert([
+const { data, error } = await this.supabase.from("documents").insert([
   {
     id: issueData.id,
-    plaintext,
     embedding,
     payload: finalPayload,
     author_id: issueData.author_id,
@@ -192,7 +191,7 @@ const { data, error } = await this.supabase.from("issues").insert([
 ]);
 ```
 
-This ensures that private issues are handled appropriately while still maintaining the vector embedding functionality.
+This lets private deployments opt into redaction while keeping the default behavior useful for embeddings and research.
 
 #### 3. Real-time Updates
 
@@ -200,15 +199,14 @@ The system maintains consistency by updating embeddings whenever issues are modi
 
 ```typescript
 async updateIssue(issueData: IssueData) {
-  const embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(issueData.markdown));
-  // ... privacy handling
+  const shouldRedact = shouldRedactPrivateRepoContent(issueData.isPrivate, this.context.config);
+  const embedding = shouldRedact ? null : await this.context.adapters.voyage.embedding.createEmbedding(issueData.markdown);
   const { error } = await this.supabase
-    .from("issues")
+    .from("documents")
     .update({
-      markdown: finalMarkdown,
-      plaintext,
+      markdown: shouldRedact ? null : issueData.markdown,
       embedding,
-      payload: finalPayload,
+      payload: shouldRedact ? null : issueData.payload,
       modified_at: new Date(),
     })
     .eq("id", issueData.id);
