@@ -10,6 +10,7 @@ import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
   node: {
+    id: string;
     title: string;
     number: number;
     url: string;
@@ -23,6 +24,19 @@ export interface IssueGraphqlResponse {
   };
   similarity: string;
   mostSimilarSentence: { sentence: string; similarity: number; index: number };
+}
+
+interface CloseIssueAsDuplicateResponse {
+  closeIssue: {
+    issue: {
+      number: number;
+      stateReason: string | null;
+      duplicateOf: {
+        number: number;
+        url: string;
+      } | null;
+    };
+  };
 }
 
 /**
@@ -74,24 +88,28 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     const matchIssues = processedIssues.filter((issue) => parseFloat(issue.similarity) / 100 >= context.config.dedupeMatchThreshold);
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.dedupeMatchThreshold} already exists`, { matchIssues });
+      const duplicateIssue = getMostSimilarIssue(matchIssues);
       //To the issue body, add a footnote with the link to the similar issue
       const updatedBody = await handleMatchIssuesComment(context, payload, cleanedIssueBody, processedIssues);
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
-      if (isBodyUnchanged && !shouldClose) {
+      const isAlreadyClosedAsDuplicate = originalIssue.state === "closed" && originalIssue.state_reason === "duplicate";
+      if (isBodyUnchanged && isAlreadyClosedAsDuplicate) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
       }
-      await octokit.rest.issues.update({
-        owner: payload.repository.owner.login,
-        repo: payload.repository.name,
-        issue_number: originalIssue.number,
-        body: nextBody,
-        state: "closed",
-        state_reason: "not_planned",
-      });
+      if (!isBodyUnchanged) {
+        await octokit.rest.issues.update({
+          owner: payload.repository.owner.login,
+          repo: payload.repository.name,
+          issue_number: originalIssue.number,
+          body: nextBody,
+        });
+      }
+      if (!isAlreadyClosedAsDuplicate) {
+        await closeIssueAsDuplicate(context, duplicateIssue);
+      }
       return;
     }
     if (processedIssues.length > 0) {
@@ -121,6 +139,55 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
 
 function matchRepoOrgToSimilarIssueRepoOrg(repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
   return repoOrg === similarIssueRepoOrg && repoName === similarIssueRepoName;
+}
+
+function getMostSimilarIssue(issues: IssueGraphqlResponse[]): IssueGraphqlResponse {
+  return [...issues].sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity))[0];
+}
+
+async function closeIssueAsDuplicate(context: Context<"issues.opened" | "issues.edited">, duplicateIssue: IssueGraphqlResponse) {
+  const {
+    logger,
+    octokit,
+    payload: { issue },
+  } = context;
+
+  try {
+    const response = await octokit.graphql<CloseIssueAsDuplicateResponse>(
+      /* GraphQL */
+      `
+        mutation CloseIssueAsDuplicate($issueId: ID!, $duplicateIssueId: ID!) {
+          closeIssue(input: { issueId: $issueId, stateReason: DUPLICATE, duplicateIssueId: $duplicateIssueId }) {
+            issue {
+              number
+              stateReason
+              duplicateOf {
+                number
+                url
+              }
+            }
+          }
+        }
+      `,
+      {
+        issueId: issue.node_id,
+        duplicateIssueId: duplicateIssue.node.id,
+      }
+    );
+
+    logger.info("Issue closed as a formal duplicate", {
+      duplicateOf: response.closeIssue.issue.duplicateOf?.url,
+      issueNumber: response.closeIssue.issue.number,
+      stateReason: response.closeIssue.issue.stateReason,
+    });
+  } catch (error) {
+    logger.error("Failed to close issue as a formal duplicate", {
+      duplicateIssueId: duplicateIssue.node.id,
+      issueNumber: issue.number,
+      errorMessage: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 function splitIntoSentences(text: string): string[] {
@@ -290,6 +357,7 @@ export async function processSimilarIssues(similarIssues: IssueSimilaritySearchR
             query ($issueNodeId: ID!) {
               node(id: $issueNodeId) {
                 ... on Issue {
+                  id
                   title
                   url
                   number
