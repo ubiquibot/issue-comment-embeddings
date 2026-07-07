@@ -528,6 +528,38 @@ describe("Plugin tests", () => {
     expect(updatedComment.body).toContain(`[^01^]: 88% similar to issue: [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);
   });
 
+  it("When a user uses default annotate command and no matches are found, it should post a note", async () => {
+    const [annotateIssue] = fetchSimilarIssues("annotate");
+    const { context } = createContextIssues(annotateIssue.issue_body, "annotate", 9, annotateIssue.title);
+    context.adapters.supabase.issue.findSimilarIssues = mock().mockResolvedValue([]);
+    context.adapters.supabase.comment.findSimilarComments = mock().mockResolvedValue([]);
+    context.adapters.supabase.issue.createIssue = mock(async () => {
+      createIssue(annotateIssue.issue_body, "annotate", annotateIssue.title, 9, { login: "test", id: 1 }, "open", null, STRINGS.TEST_REPO, STRINGS.USER_1);
+    });
+
+    await runPlugin(context);
+
+    createComment(annotateComment.body, annotateComment.id, "annotate", 9);
+
+    const { context: context2, comment } = createContext("/annotate", 1, 1, 2, "createAnnotate", "annotate");
+    context2.adapters.supabase.issue.findSimilarIssues = mock().mockResolvedValue([]);
+    context2.adapters.supabase.comment.findSimilarComments = mock().mockResolvedValue([]);
+    context2.octokit.rest.issues.listComments = mock(async () => {
+      return { data: [annotateComment, comment] };
+    }) as unknown as typeof octokit.rest.issues.listComments;
+
+    let postedBody = "";
+    context2.octokit.rest.issues.createComment = mock(async (params: { owner: string; repo: string; issue_number: number; body: string }) => {
+      postedBody = params.body;
+      createComment(params.body, 99, "annotateNoMatches", params.issue_number);
+    }) as unknown as typeof octokit.rest.issues.createComment;
+
+    await runPlugin(context2);
+
+    expect(postedBody).toContain(">[!NOTE]");
+    expect(postedBody).toContain("No similar issues or comments found.");
+  });
+
   it("When demoFlag is true, it should skip storing issues in the database", async () => {
     const { context } = createContextIssues(DEFAULT_BODY, "demoIssue", 10, "Demo Test Issue");
 
