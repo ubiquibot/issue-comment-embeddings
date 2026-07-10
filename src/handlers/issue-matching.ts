@@ -1,5 +1,6 @@
 import { IssueSimilaritySearchResult } from "../adapters/supabase/helpers/issues";
 import { Context } from "../types/index";
+import { getRepositoryContextAdjustedSimilarity } from "../utils/matching-similarity";
 
 export interface IssueGraphqlResponse {
   node: {
@@ -212,14 +213,15 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
       const hasAssignees = issue.node.assignees.nodes.length > 0;
       const isCompletedWithAssignees = issue.node.closed && issue.node.stateReason === "COMPLETED" && hasAssignees;
       const isEligible = options.includeNonCompleted ? hasAssignees : isCompletedWithAssignees;
+      const adjustedSimilarity = getRepositoryContextAdjustedSimilarity(issue.similarity, payload.repository, issue.node.repository);
 
-      if (isEligible) {
+      if (isEligible && adjustedSimilarity >= threshold) {
         const assignees = issue.node.assignees.nodes;
         assignees.forEach((assignee: { login: string; url: string }) => {
           if (options.allowedLogins && !options.allowedLogins.has(assignee.login)) {
             return;
           }
-          const similarityPercentage = Math.round(issue.similarity * 100);
+          const similarityPercentage = Math.round(adjustedSimilarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
