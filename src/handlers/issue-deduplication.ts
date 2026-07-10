@@ -6,6 +6,7 @@ import { Context } from "../types/index";
 import { appendPluginUpdateComment, normalizeWhitespace, stripHtmlComments, stripPluginUpdateComments } from "../utils/markdown-comments";
 import { appendFootnoteRefsToFirstLine, insertFootnoteRefNearSentence } from "../utils/footnote-placement";
 import { stripDuplicateFootnotes } from "../utils/footnotes";
+import { buildIssueFootnoteUrl } from "../utils/issue-footnote-url";
 import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
@@ -205,7 +206,7 @@ async function handleSimilarIssuesComment(
   relevantIssues.forEach((issue, index) => {
     const footnoteIndex = highestFootnoteIndex + index + 1; // Continue numbering from the highest existing footnote number
     const footnoteRef = `[^0${footnoteIndex}^]`;
-    const modifiedUrl = issue.node.url.replace("https://github.com", "https://www.github.com");
+    const modifiedUrl = buildIssueFootnoteUrl(issue.node.url, issue.node.number);
     const { sentence } = issue.mostSimilarSentence;
     // Insert footnote reference in the body
     if (!sentence.trim()) {
@@ -228,7 +229,7 @@ async function handleSimilarIssuesComment(
     }
 
     // Add new footnote to the array
-    footnotes.push(`${footnoteRef}: ⚠ ${issue.similarity}% possible duplicate - [${issue.node.title}](${modifiedUrl}#${issue.node.number})\n\n`);
+    footnotes.push(`${footnoteRef}: ⚠ ${issue.similarity}% possible duplicate - [${issue.node.title}](${modifiedUrl})\n\n`);
   });
   if (orphanRefs.length > 0) {
     updatedBody = appendFootnoteRefsToFirstLine(updatedBody, orphanRefs);
