@@ -4,6 +4,7 @@ import { Context } from "../../../types/context";
 import { IssueDocumentType, ISSUE_DOCUMENT_TYPES } from "../../../types/document";
 import { serializeEmbeddingForDatabase } from "../../../utils/database-embedding";
 import { cleanMarkdown, isTooShort, MIN_ISSUE_MARKDOWN_LENGTH } from "../../../utils/embedding-content";
+import { shouldRedactPrivateRepoContent } from "../../../utils/private-redaction";
 
 export interface IssueType {
   id: string;
@@ -96,7 +97,7 @@ export class Issue extends SuperSupabase {
     let finalMarkdown = isShortIssue ? null : issueData.markdown;
     let finalPayload = issueData.payload;
 
-    if (isPrivate) {
+    if (shouldRedactPrivateRepoContent(isPrivate, this.context.config)) {
       finalMarkdown = null;
       finalPayload = null;
     }
@@ -137,7 +138,7 @@ export class Issue extends SuperSupabase {
     let finalMarkdown = isShortIssue ? null : issueData.markdown;
     let finalPayload = issueData.payload;
 
-    if (isPrivate) {
+    if (shouldRedactPrivateRepoContent(isPrivate, this.context.config)) {
       finalMarkdown = null;
       finalPayload = null;
     }

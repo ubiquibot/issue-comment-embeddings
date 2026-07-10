@@ -5,6 +5,7 @@ import { COMMENT_DOCUMENT_TYPES, CommentDocumentType } from "../../../types/docu
 import { serializeEmbeddingForDatabase } from "../../../utils/database-embedding";
 import { cleanMarkdown, isTooShort, MIN_COMMENT_MARKDOWN_LENGTH } from "../../../utils/embedding-content";
 import { isCommandLikeContent } from "../../../utils/markdown-comments";
+import { shouldRedactPrivateRepoContent } from "../../../utils/private-redaction";
 
 export interface CommentType {
   id: string;
@@ -83,7 +84,7 @@ export class Comment extends SuperSupabase {
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (shouldRedactPrivateRepoContent(isPrivate, this.context.config)) {
       finalMarkdown = null;
       finalPayload = null;
     }
@@ -125,7 +126,7 @@ export class Comment extends SuperSupabase {
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (shouldRedactPrivateRepoContent(isPrivate, this.context.config)) {
       finalMarkdown = null;
       finalPayload = null;
     }
