@@ -31,8 +31,129 @@ type IssueCommentSummary = {
   body?: string | null;
 };
 
+type RepositoryInfo = {
+  owner: string;
+  name: string;
+};
+
+type ContextScope = "repo" | "org" | "global";
+
+type ContributorRecommendation = {
+  login: string;
+  matches: string[];
+  maxSimilarity: number;
+};
+
 function hasIssueNode(response: IssueNodeResponse): response is IssueGraphqlResponse {
   return response.node !== null;
+}
+
+function getCurrentRepositoryInfo(payload: Context<IssueMatchingEvents>["payload"]): RepositoryInfo | null {
+  const repository = (payload as { repository?: { owner?: { login?: string }; name?: string } }).repository;
+  if (repository?.owner?.login && repository.name) {
+    return { owner: repository.owner.login, name: repository.name };
+  }
+
+  const repositoryUrl = (payload.issue as { repository_url?: string }).repository_url;
+  const match = repositoryUrl?.match(/\/repos\/([^/]+)\/([^/]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return { owner: match[1], name: match[2] };
+}
+
+function getContextScope(currentRepository: RepositoryInfo | null, similarRepository: RepositoryInfo): ContextScope {
+  if (!currentRepository) {
+    return "global";
+  }
+  if (currentRepository.owner === similarRepository.owner && currentRepository.name === similarRepository.name) {
+    return "repo";
+  }
+  if (currentRepository.owner === similarRepository.owner) {
+    return "org";
+  }
+  return "global";
+}
+
+export function calculateContextAdjustedSimilarity(similarity: number, scope: ContextScope): number {
+  const penaltyByScope: Record<ContextScope, number> = {
+    repo: 0,
+    org: 25,
+    global: 50,
+  };
+  return Math.max(0, Math.round(similarity * 100 - penaltyByScope[scope]));
+}
+
+function getContextLabel(scope: ContextScope) {
+  if (scope === "repo") {
+    return "";
+  }
+  if (scope === "org") {
+    return " (same organization context)";
+  }
+  return " (global context)";
+}
+
+function createIssueMatchLine(issue: IssueGraphqlResponse, adjustedSimilarityPercentage: number, scope: ContextScope) {
+  const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
+  return `> \`${adjustedSimilarityPercentage}% Match\` [${issue.node.repository.owner.login}/${issue.node.repository.name}#${issue.node.url.split("/").pop()}](${issueLink})${getContextLabel(scope)}`;
+}
+
+function buildSortedContributors(matchResultArray: Map<string, Array<string>>): ContributorRecommendation[] {
+  return Array.from(matchResultArray.entries())
+    .map(([login, matches]) => ({
+      login,
+      matches,
+      maxSimilarity: matches.length ? Math.max(...matches.map((match) => parseInt(match.match(/`(\d+)% Match`/)?.[1] || "0"))) : 0,
+    }))
+    .sort((a, b) => b.maxSimilarity - a.maxSimilarity);
+}
+
+async function findRecentCodebaseContributor(
+  context: Context<IssueMatchingEvents>,
+  repository: RepositoryInfo | null,
+  allowedLogins?: Set<string>
+): Promise<{ login: string; commits: number } | null> {
+  if (!repository) {
+    return null;
+  }
+
+  try {
+    const response = await context.octokit.rest.repos.listCommits({
+      owner: repository.owner,
+      repo: repository.name,
+      per_page: 100,
+    });
+    const contributionCounts = new Map<string, number>();
+    for (const commit of response.data) {
+      const login = commit.author?.login;
+      if (!login || login.endsWith("[bot]") || (allowedLogins && !allowedLogins.has(login))) {
+        continue;
+      }
+      contributionCounts.set(login, (contributionCounts.get(login) ?? 0) + 1);
+    }
+    const [topContributor] = Array.from(contributionCounts.entries()).sort((a, b) => b[1] - a[1]);
+    if (!topContributor) {
+      return null;
+    }
+    return { login: topContributor[0], commits: topContributor[1] };
+  } catch (error) {
+    context.logger.warn("Unable to fetch recent repository contributors for recommendation fallback.", {
+      repository,
+      error,
+    });
+    return null;
+  }
+}
+
+function addCodebaseActivityFallback(matchResultArray: Map<string, Array<string>>, contributor: { login: string; commits: number }) {
+  const fallbackMatch = `> Codebase activity fallback: top recent contributor in this repository (${contributor.commits} commits in the latest 100 commits).`;
+  const matches = matchResultArray.get(contributor.login) ?? [];
+  if (!matches.includes(fallbackMatch)) {
+    matches.push(fallbackMatch);
+  }
+  matchResultArray.set(contributor.login, matches);
 }
 
 export async function issueMatchingWithComment(context: Context<"issues.opened" | "issues.edited" | "issues.labeled">) {
@@ -135,6 +256,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
   const issue = payload.issue;
   const authorType = issue.user?.type;
   const isHumanAuthor = authorType === "User";
+  const currentRepository = getCurrentRepositoryInfo(payload);
   if (!isHumanAuthor) {
     logger.debug("Skipping issue matching for non-human author.", {
       author: issue.user?.login,
@@ -215,22 +337,20 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
 
       if (isEligible) {
         const assignees = issue.node.assignees.nodes;
+        const scope = getContextScope(currentRepository, {
+          owner: issue.node.repository.owner.login,
+          name: issue.node.repository.name,
+        });
+        const similarityPercentage = calculateContextAdjustedSimilarity(issue.similarity, scope);
         assignees.forEach((assignee: { login: string; url: string }) => {
           if (options.allowedLogins && !options.allowedLogins.has(assignee.login)) {
             return;
           }
-          const similarityPercentage = Math.round(issue.similarity * 100);
-          const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
+          const issueMatch = createIssueMatchLine(issue, similarityPercentage, scope);
           if (matchResultArray.has(assignee.login)) {
-            matchResultArray
-              .get(assignee.login)
-              ?.push(
-                `> \`${similarityPercentage}% Match\` [${issue.node.repository.owner.login}/${issue.node.repository.name}#${issue.node.url.split("/").pop()}](${issueLink})`
-              );
+            matchResultArray.get(assignee.login)?.push(issueMatch);
           } else {
-            matchResultArray.set(assignee.login, [
-              `> \`${similarityPercentage}% Match\` [${issue.node.repository.owner.login}/${issue.node.repository.name}#${issue.node.url.split("/").pop()}](${issueLink})`,
-            ]);
+            matchResultArray.set(assignee.login, [issueMatch]);
           }
         });
       }
@@ -246,14 +366,14 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
 
     logger.debug("Matched issues", { matchResultArray, length: matchResultArray.size });
 
-    // Convert Map to array and sort by highest similarity
-    const sortedContributors = Array.from(matchResultArray.entries())
-      .map(([login, matches]) => ({
-        login,
-        matches,
-        maxSimilarity: matches.length ? Math.max(...matches.map((match) => parseInt(match.match(/`(\d+)% Match`/)?.[1] || "0"))) : 0,
-      }))
-      .sort((a, b) => b.maxSimilarity - a.maxSimilarity);
+    let sortedContributors = buildSortedContributors(matchResultArray);
+    if ((sortedContributors[0]?.maxSimilarity ?? 0) < 25) {
+      const fallbackContributor = await findRecentCodebaseContributor(context, currentRepository, options.allowedLogins);
+      if (fallbackContributor) {
+        addCodebaseActivityFallback(matchResultArray, fallbackContributor);
+        sortedContributors = buildSortedContributors(matchResultArray);
+      }
+    }
 
     logger.debug("Sorted contributors", { sortedContributors });
     return { matchResultArray, similarIssues, sortedContributors };
@@ -265,18 +385,26 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
         matchResultArray.set(login, []);
       }
     }
-    const sortedContributors = Array.from(matchResultArray.entries())
-      .map(([login, matches]) => ({
-        login,
-        matches,
-        maxSimilarity: 0,
-      }))
-      .sort((a, b) => b.maxSimilarity - a.maxSimilarity);
+    let sortedContributors = buildSortedContributors(matchResultArray);
+    const fallbackContributor = await findRecentCodebaseContributor(context, currentRepository, options.allowedLogins);
+    if (fallbackContributor) {
+      addCodebaseActivityFallback(matchResultArray, fallbackContributor);
+      sortedContributors = buildSortedContributors(matchResultArray);
+    }
     return { matchResultArray, similarIssues: [], sortedContributors };
   }
 
-  logger.info(`Exiting issueMatching handler!`, { similarIssues: similarIssues || "No similar issues found" });
+  const fallbackContributor = await findRecentCodebaseContributor(context, currentRepository, options.allowedLogins);
+  if (fallbackContributor) {
+    addCodebaseActivityFallback(matchResultArray, fallbackContributor);
+    return {
+      matchResultArray,
+      similarIssues: [],
+      sortedContributors: buildSortedContributors(matchResultArray),
+    };
+  }
 
+  logger.info(`Exiting issueMatching handler!`, { similarIssues: similarIssues || "No similar issues found" });
   return null;
 }
 
