@@ -5,6 +5,8 @@ import { CommentSimilaritySearchResult } from "../adapters/supabase/helpers/comm
 import { stripHtmlComments } from "../utils/markdown-comments";
 import { appendFootnoteRefsToFirstLine, insertFootnoteRefNearSentence } from "../utils/footnote-placement";
 
+const NO_ANNOTATE_MATCHES_MESSAGE = "Annotate completed successfully, but no similar issues or comments were found.";
+
 interface CommentGraphqlResponse {
   node: {
     body: string;
@@ -116,7 +118,7 @@ export async function commentChecker(context: Context<"issue_comment.created">, 
   } else {
     context.logger.info("No similar comments found for comment", { commentBody });
   }
-  await handleSimilarIssuesAndComments(context, payload, commentBody, comment.id, processedIssues, processedComments);
+  await handleSimilarIssuesAndComments(context, payload, payload.issue.number, commentBody, comment.id, processedIssues, processedComments);
 }
 
 function filterByScope(scope: string, repoOrg: string, similarIssueRepoOrg: string, repoName: string, similarIssueRepoName: string): boolean {
@@ -135,12 +137,19 @@ function filterByScope(scope: string, repoOrg: string, similarIssueRepoOrg: stri
 async function handleSimilarIssuesAndComments(
   context: Context,
   payload: Context["payload"],
+  issueNumber: number,
   commentBody: string,
   commentId: number,
   issueList: IssueGraphqlResponse[],
   commentList: CommentGraphqlResponse[]
 ) {
   if (!issueList.length && !commentList.length) {
+    await context.octokit.rest.issues.createComment({
+      owner: payload.repository.owner.login,
+      repo: payload.repository.name,
+      issue_number: issueNumber,
+      body: NO_ANNOTATE_MATCHES_MESSAGE,
+    });
     return;
   }
   // Find existing footnotes in the body
