@@ -204,6 +204,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     const issueList = await Promise.allSettled(fetchPromises);
 
     logger.debug("Fetched similar issues", { issueList });
+    const seenAssigneeIssueMatches = new Set<string>();
     issueList.forEach((issuePromise: PromiseSettledResult<IssueGraphqlResponse | null>) => {
       if (!issuePromise || issuePromise.status === "rejected" || !issuePromise.value) {
         return;
@@ -221,6 +222,11 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
           }
           const similarityPercentage = Math.round(issue.similarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
+          const assigneeIssueKey = `${assignee.login}:${issueLink}`;
+          if (seenAssigneeIssueMatches.has(assigneeIssueKey)) {
+            return;
+          }
+          seenAssigneeIssueMatches.add(assigneeIssueKey);
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
               .get(assignee.login)
