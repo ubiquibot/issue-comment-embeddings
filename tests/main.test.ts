@@ -234,6 +234,7 @@ describe("Plugin tests", () => {
         title: STRINGS.SIMILAR_ISSUE,
         url: STRINGS.ISSUE_URL,
         number: 3,
+        databaseId: 3001,
         lastEditedAt: "2020-01-12T17:52:02Z",
         body: matchThresholdIssue1.issue_body,
         repository: {
@@ -259,8 +260,18 @@ describe("Plugin tests", () => {
       );
     });
 
+    let capturedDuplicateIssueId: number | undefined;
     context2.octokit.rest.issues.update = mock(
-      async (params: { owner: string; repo: string; issue_number: number; body?: string; state?: string; state_reason?: string }) => {
+      async (params: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        body?: string;
+        state?: string;
+        state_reason?: string;
+        duplicate_issue_id?: number;
+      }) => {
+        capturedDuplicateIssueId = params.duplicate_issue_id;
         const updatedBody = `${matchThresholdIssue2.issue_body}\n\n>[!CAUTION]\n> This issue may be a duplicate of the following issues:\n> - [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})\n`;
         db.issue.update({
           where: {
@@ -278,7 +289,8 @@ describe("Plugin tests", () => {
     await runPlugin(context2);
     const issue = db.issue.findFirst({ where: { number: { equals: 4 } } }) as unknown as Context["payload"]["issue"];
     expect(issue.state).toBe("closed");
-    expect(issue.state_reason).toBe("not_planned");
+    expect(issue.state_reason).toBe("duplicate");
+    expect(capturedDuplicateIssueId).toBe(3001);
     expect(issue.body).toContain(">[!CAUTION]");
     expect(issue.body).toContain("This issue may be a duplicate of the following issues:");
     expect(issue.body).toContain(`- [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);

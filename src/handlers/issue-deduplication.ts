@@ -12,6 +12,7 @@ export interface IssueGraphqlResponse {
   node: {
     title: string;
     number: number;
+    databaseId?: number;
     url: string;
     body: string;
     repository: {
@@ -74,6 +75,12 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
     const matchIssues = processedIssues.filter((issue) => parseFloat(issue.similarity) / 100 >= context.config.dedupeMatchThreshold);
     if (matchIssues.length > 0) {
       logger.info(`Similar issue which matches more than ${context.config.dedupeMatchThreshold} already exists`, { matchIssues });
+      const canonicalDuplicate = [...matchIssues].sort((a, b) => parseFloat(b.similarity) - parseFloat(a.similarity))[0];
+      const duplicateIssueId = canonicalDuplicate?.node.databaseId;
+      if (duplicateIssueId == null) {
+        logger.error("Unable to close issue as duplicate because the canonical issue database ID is missing", { matchIssues });
+        return;
+      }
       //To the issue body, add a footnote with the link to the similar issue
       const updatedBody = await handleMatchIssuesComment(context, payload, cleanedIssueBody, processedIssues);
       const outputBody = updatedBody || cleanedIssueBody;
@@ -90,7 +97,8 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
         issue_number: originalIssue.number,
         body: nextBody,
         state: "closed",
-        state_reason: "not_planned",
+        state_reason: "duplicate",
+        duplicate_issue_id: duplicateIssueId,
       });
       return;
     }
@@ -293,6 +301,7 @@ export async function processSimilarIssues(similarIssues: IssueSimilaritySearchR
                   title
                   url
                   number
+                  databaseId
                   body
                   repository {
                     name
