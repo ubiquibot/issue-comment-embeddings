@@ -86,7 +86,7 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "duplicate";
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
