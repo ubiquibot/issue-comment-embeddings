@@ -203,7 +203,7 @@ describe("Plugin tests", () => {
     }
   );
 
-  it("When an issue is created with similarity above match threshold, it should close the issue and add a caution alert", async () => {
+  it("When an issue is created above the match threshold, it should mark the issue as a formal duplicate", async () => {
     const [matchThresholdIssue1, matchThresholdIssue2] = fetchSimilarIssues("match_threshold_95");
     const { context } = createContextIssues(matchThresholdIssue1.issue_body, "match1", 3, matchThresholdIssue1.title);
     context.eventName = ISSUES_EDITED_EVENT_NAME;
@@ -231,6 +231,7 @@ describe("Plugin tests", () => {
     ] as unknown as IssueSimilaritySearchResult[]);
     context2.octokit.graphql = mock().mockResolvedValue({
       node: {
+        databaseId: 3003,
         title: STRINGS.SIMILAR_ISSUE,
         url: STRINGS.ISSUE_URL,
         number: 3,
@@ -278,7 +279,13 @@ describe("Plugin tests", () => {
     await runPlugin(context2);
     const issue = db.issue.findFirst({ where: { number: { equals: 4 } } }) as unknown as Context["payload"]["issue"];
     expect(issue.state).toBe("closed");
-    expect(issue.state_reason).toBe("not_planned");
+    expect(issue.state_reason).toBe("duplicate");
+    expect(context2.octokit.rest.issues.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        duplicate_issue_id: 3003,
+        state_reason: "duplicate",
+      })
+    );
     expect(issue.body).toContain(">[!CAUTION]");
     expect(issue.body).toContain("This issue may be a duplicate of the following issues:");
     expect(issue.body).toContain(`- [${STRINGS.SIMILAR_ISSUE}](${STRINGS.ISSUE_URL})`);

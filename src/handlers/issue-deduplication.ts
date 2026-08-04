@@ -10,6 +10,7 @@ import { findEditDistance } from "../utils/string-similarity";
 
 export interface IssueGraphqlResponse {
   node: {
+    databaseId: number;
     title: string;
     number: number;
     url: string;
@@ -79,18 +80,22 @@ export async function issueDedupe(context: Context<"issues.opened" | "issues.edi
       const outputBody = updatedBody || cleanedIssueBody;
       const nextBody = updateComment ? appendPluginUpdateComment(outputBody, updateComment) : outputBody;
       const isBodyUnchanged = normalizeWhitespace(originalIssue.body ?? "") === normalizeWhitespace(nextBody);
-      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "not_planned";
+      const shouldClose = originalIssue.state !== "closed" || originalIssue.state_reason !== "duplicate";
       if (isBodyUnchanged && !shouldClose) {
         logger.info("Issue body unchanged after dedupe match update", { issueNumber: originalIssue.number });
         return;
       }
+      const canonicalIssue = matchIssues.reduce((mostSimilar, issue) =>
+        parseFloat(issue.similarity) > parseFloat(mostSimilar.similarity) ? issue : mostSimilar
+      );
       await octokit.rest.issues.update({
         owner: payload.repository.owner.login,
         repo: payload.repository.name,
         issue_number: originalIssue.number,
         body: nextBody,
         state: "closed",
-        state_reason: "not_planned",
+        state_reason: "duplicate",
+        duplicate_issue_id: canonicalIssue.node.databaseId,
       });
       return;
     }
@@ -290,6 +295,7 @@ export async function processSimilarIssues(similarIssues: IssueSimilaritySearchR
             query ($issueNodeId: ID!) {
               node(id: $issueNodeId) {
                 ... on Issue {
+                  databaseId
                   title
                   url
                   number
