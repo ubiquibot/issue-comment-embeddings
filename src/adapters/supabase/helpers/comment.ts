@@ -76,14 +76,15 @@ export class Comment extends SuperSupabase {
       return;
     }
     //Create the embedding for this comment
+    const shouldRedact = isPrivate && (this.context.config.redactPrivateRepoComments ?? false);
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !shouldRedact) {
       embedding = await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource);
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (shouldRedact) {
       finalMarkdown = null;
       finalPayload = null;
     }
@@ -118,14 +119,15 @@ export class Comment extends SuperSupabase {
     const shouldSkipEmbedding = isCommandComment || isShortComment;
     const embeddingSource = shouldSkipEmbedding ? null : cleanedMarkdown;
     //Create the embedding for this comment
+    const shouldRedact = isPrivate && (this.context.config.redactPrivateRepoComments ?? false);
     let embedding: number[] | null = null;
-    if (!shouldDeferEmbedding && embeddingSource && !isPrivate) {
+    if (!shouldDeferEmbedding && embeddingSource && !shouldRedact) {
       embedding = Array.from(await this.context.adapters.voyage.embedding.createEmbedding(embeddingSource));
     }
     let finalMarkdown = shouldSkipEmbedding ? null : commentData.markdown;
     let finalPayload = commentData.payload;
 
-    if (isPrivate) {
+    if (shouldRedact) {
       finalMarkdown = null;
       finalPayload = null;
     }

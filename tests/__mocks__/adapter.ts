@@ -36,8 +36,8 @@ export function createMockAdapters(context: Context) {
             throw new Error("Comment already exists");
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
-          const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+          const shouldRedact = commentData.isPrivate && (context.config.redactPrivateRepoComments ?? false);
+          const embedding = shouldRedact ? [] : await context.adapters.voyage.embedding.createEmbedding(cleanedMarkdown);
           commentMap.set(commentData.id, {
             id: commentData.id,
             author_id: commentData.author_id,
@@ -52,13 +52,13 @@ export function createMockAdapters(context: Context) {
             throw new Error(STRINGS.COMMENT_DOES_NOT_EXIST);
           }
           const cleanedMarkdown = commentData.markdown ? stripHtmlComments(commentData.markdown).trim() : "";
-          const embeddingSource = commentData.isPrivate ? "" : cleanedMarkdown;
-          const embedding = await context.adapters.voyage.embedding.createEmbedding(embeddingSource);
+          const shouldRedact = commentData.isPrivate && (context.config.redactPrivateRepoComments ?? false);
+          const embedding = shouldRedact ? [] : await context.adapters.voyage.embedding.createEmbedding(cleanedMarkdown);
           commentMap.set(commentData.id, {
             id: commentData.id,
             author_id: commentData.author_id,
             embedding,
-            payload: commentData.payload,
+            payload: shouldRedact ? null : commentData.payload,
             issue_id: commentData.issue_id,
           });
         }),
