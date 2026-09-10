@@ -42,6 +42,16 @@ export async function initAdapters(context: Context) {
 }
 
 /**
+ * Labels present at issue creation also emit `issues.labeled` with the same
+ * created_at/updated_at timestamps. Matching already runs on `issues.opened`,
+ * so skip that initial label webhook to avoid duplicate recommendations.
+ */
+export function isInitialIssueLabelEvent(context: Context<"issues.labeled">) {
+  const { created_at: createdAt, updated_at: updatedAt } = context.payload.issue;
+  return typeof createdAt === "string" && typeof updatedAt === "string" && createdAt === updatedAt;
+}
+
+/**
  * The main plugin function. Split for easier testing.
  */
 export async function runPlugin(context: Context) {
@@ -127,6 +137,10 @@ export async function runPlugin(context: Context) {
     } else if (eventName == "issues.labeled") {
       if (shouldDeferEmbeddings) {
         logger.debug("Embedding queue enabled; skipping issue matching on label.");
+        return;
+      }
+      if (isInitialIssueLabelEvent(context as Context<"issues.labeled">)) {
+        logger.debug("Skipping issue matching on label event from initial issue creation.");
         return;
       }
       return await issueMatchingWithComment(context as Context<"issues.labeled">);

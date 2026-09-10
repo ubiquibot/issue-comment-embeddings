@@ -126,6 +126,32 @@ type IssueMatchingInternalOptions = {
   includeNonCompleted?: boolean;
 };
 
+function getIssueNodeId(issue: IssueSimilaritySearchResult): string {
+  return issue.issue_id || issue.id;
+}
+
+/**
+ * Similarity search can return the same issue more than once (e.g. multiple
+ * document rows). Keep the highest similarity per issue node id.
+ */
+export function dedupeSimilarIssues(similarIssues: IssueSimilaritySearchResult[]): IssueSimilaritySearchResult[] {
+  const bestByIssueId = new Map<string, IssueSimilaritySearchResult>();
+
+  for (const issue of similarIssues) {
+    const issueNodeId = getIssueNodeId(issue);
+    if (!issueNodeId) {
+      continue;
+    }
+
+    const existing = bestByIssueId.get(issueNodeId);
+    if (!existing || issue.similarity > existing.similarity) {
+      bestByIssueId.set(issueNodeId, { ...issue, issue_id: issueNodeId });
+    }
+  }
+
+  return Array.from(bestByIssueId.values()).sort((a, b) => b.similarity - a.similarity);
+}
+
 async function issueMatchingInternal(context: Context<IssueMatchingEvents>, options: IssueMatchingInternalOptions) {
   const {
     logger,
@@ -158,8 +184,8 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
   });
 
   if (similarIssues && similarIssues.length > 0) {
-    similarIssues.sort((a: IssueSimilaritySearchResult, b: IssueSimilaritySearchResult) => b.similarity - a.similarity); // Sort by similarity
-    const fetchPromises = similarIssues.map(async (issue: IssueSimilaritySearchResult) => {
+    const uniqueSimilarIssues = dedupeSimilarIssues(similarIssues);
+    const fetchPromises = uniqueSimilarIssues.map(async (issue: IssueSimilaritySearchResult) => {
       try {
         const issueObject: IssueNodeResponse = await context.octokit.graphql(
           /* GraphQL */
@@ -204,6 +230,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
     const issueList = await Promise.allSettled(fetchPromises);
 
     logger.debug("Fetched similar issues", { issueList });
+    const seenAssigneeIssueMatches = new Set<string>();
     issueList.forEach((issuePromise: PromiseSettledResult<IssueGraphqlResponse | null>) => {
       if (!issuePromise || issuePromise.status === "rejected" || !issuePromise.value) {
         return;
@@ -221,6 +248,11 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
           }
           const similarityPercentage = Math.round(issue.similarity * 100);
           const issueLink = issue.node.url.replace(/https?:\/\/github.com/, "https://www.github.com");
+          const assigneeIssueKey = `${assignee.login}:${issue.node.url}`;
+          if (seenAssigneeIssueMatches.has(assigneeIssueKey)) {
+            return;
+          }
+          seenAssigneeIssueMatches.add(assigneeIssueKey);
           if (matchResultArray.has(assignee.login)) {
             matchResultArray
               .get(assignee.login)
@@ -256,7 +288,7 @@ async function issueMatchingInternal(context: Context<IssueMatchingEvents>, opti
       .sort((a, b) => b.maxSimilarity - a.maxSimilarity);
 
     logger.debug("Sorted contributors", { sortedContributors });
-    return { matchResultArray, similarIssues, sortedContributors };
+    return { matchResultArray, similarIssues: uniqueSimilarIssues, sortedContributors };
   }
 
   if (options.ensureLogins && options.ensureLogins.length > 0) {
